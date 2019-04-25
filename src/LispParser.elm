@@ -1,32 +1,42 @@
-module LispParser exposing (encodeSExpr, errToString, parse, parseToStringRepr)
+module LispParser exposing
+    ( encodeSExpr
+    , errorToString
+    , maybeErrorToString
+    , parse
+    , parseToStringRepr
+    )
 
 import Json.Encode as E
 import Keys exposing (keyNameToCode)
 import List.Extra
+import Maybe
 import Parser.Advanced as Parser exposing (..)
 import Set
 
 
 type Problem
-    = UnexpectedEOF
-    | ExpectedExpr
-    | ExpectedList
-    | ExpectedListEnd
-    | ExpectedSymbol
-    | ExpectedString
-    | ExpectedNumber
-    | ExpectedKey
+    = ExpectedExpr
     | ExpectedKeyName
+    | ExpectedListEnd
+    | UnexpectedStringEnd
     | InvalidNumber
-    | InvalidString
-    | InvalidKey
+    | InvalidStringEscape
+    | InvalidKey String
     | Never
 
 
+type Context
+    = StrLit
+    | ListLit
+    | KeyLit
+
+
 type alias Parser a =
-    -- Use `Never` as the context type here because lisp is really simple - it's
-    -- generally not too hard to figure out what's going on.
-    Parser.Parser Never Problem a
+    Parser.Parser Context Problem a
+
+
+type alias Error =
+    DeadEnd Context Problem
 
 
 type SExpr
@@ -38,44 +48,39 @@ type SExpr
 
 
 type alias ErrRepr =
-    { pos : Maybe ( Int, Int ), msgs : List String }
+    { pos : Maybe ( Int, Int ), msg : String }
 
 
-reprErrs : List (DeadEnd Never Problem) -> ErrRepr
+reprErrs : List Error -> ErrRepr
 reprErrs errs =
     let
+        err =
+            pickErr errs
+
         pos =
-            case List.head errs of
-                Nothing ->
-                    Nothing
-
-                Just { row, col } ->
-                    Just ( row, col )
+            Maybe.map (\{ row, col } -> ( row, col )) err
     in
-    { pos = pos, msgs = List.map errToString errs }
+    { pos = pos, msg = maybeErrorToString err }
 
 
-errToString : DeadEnd Never Problem -> String
-errToString err =
+pickErr : List Error -> Maybe Error
+pickErr errs =
+    errs
+        |> List.sortBy
+            (\err ->
+                case err.problem of
+                    ExpectedKeyName ->
+                        1
+
+                    _ ->
+                        10
+            )
+        |> List.head
+
+
+errorToString : Error -> String
+errorToString err =
     case err.problem of
-        UnexpectedEOF ->
-            "Reached the end of the input unexpectedly, before the expression was fully parsed"
-
-        ExpectedList ->
-            ""
-
-        ExpectedSymbol ->
-            ""
-
-        ExpectedString ->
-            ""
-
-        ExpectedNumber ->
-            ""
-
-        ExpectedKey ->
-            ""
-
         ExpectedExpr ->
             "Expected an expression, like a list: (a b c), string: \"abc\", or number: 123"
 
@@ -83,26 +88,43 @@ errToString err =
             "Expected the name of a key. There cannot be any spaces between the '@' and the key name"
 
         ExpectedListEnd ->
-            "listend"
+            "Expected the end of a list, but couldn't find it. Try adding a ')'."
+
+        UnexpectedStringEnd ->
+            "Couldn't find a closing '\"' for string literal."
 
         InvalidNumber ->
-            ""
+            "You have a malformed number literal."
 
-        InvalidString ->
-            ""
+        InvalidStringEscape ->
+            "You have an invalid character after a '\\' in your string. To "
+                ++ "represent a raw '\\', you need to put 2 of them, like: '\\\\'"
 
-        InvalidKey ->
-            ""
+        InvalidKey keyname ->
+            "You have an invalid key name: '"
+                ++ keyname
+                ++ "'. Did you mean: "
+                ++ (Keys.getClosestKeys keyname
+                        |> List.map (\k -> "'" ++ k ++ "'")
+                        |> List.intersperse " or "
+                        |> List.foldr (++) ""
+                   )
+                ++ "?"
 
         Never ->
             "You should never see this error message"
 
 
+maybeErrorToString : Maybe Error -> String
+maybeErrorToString err =
+    err |> Maybe.map errorToString |> Maybe.withDefault ""
+
+
 encodeErrRepr : ErrRepr -> E.Value
-encodeErrRepr { pos, msgs } =
+encodeErrRepr { pos, msg } =
     E.object <|
         List.concat
-            [ [ ( "msg", E.list E.string msgs )
+            [ [ ( "msg", E.string msg )
               ]
             , case pos of
                 Nothing ->
@@ -146,11 +168,11 @@ parseToStringRepr input =
         Ok parsed ->
             E.list encodeSExpr parsed |> E.encode 2
 
-        Err err ->
-            Debug.toString <| List.map errToString err
+        Err errs ->
+            pickErr errs |> maybeErrorToString
 
 
-parse : String -> Result (List (DeadEnd Never Problem)) (List SExpr)
+parse : String -> Result (List Error) (List SExpr)
 parse input =
     Parser.run parser input
 
@@ -158,7 +180,7 @@ parse input =
 parser =
     succeed identity
         |= program
-        |. end UnexpectedEOF
+        |. end ExpectedExpr
 
 
 program : Parser (List SExpr)
@@ -166,7 +188,7 @@ program =
     sequence
         { start = Token "" Never
         , separator = Token "" Never
-        , end = Token "" UnexpectedEOF
+        , end = Token "" Never
         , spaces = spaces
         , item = expr
         , trailing = Optional
@@ -195,7 +217,7 @@ symbol =
         { start = Char.isAlpha
         , inner = Char.isAlphaNum
         , reserved = Set.empty
-        , expecting = ExpectedSymbol
+        , expecting = ExpectedExpr
         }
 
 
@@ -203,7 +225,7 @@ list : Parser (List SExpr)
 list =
     sequence
         { start = Token "(" ExpectedExpr
-        , separator = Token "" ExpectedExpr
+        , separator = Token "" Never
         , end = Token ")" ExpectedListEnd
         , spaces = spaces
         , item = lazy (\_ -> expr)
@@ -213,23 +235,25 @@ list =
 
 key : Parser Int
 key =
-    succeed identity
-        |. Parser.symbol (Token "@" ExpectedKey)
-        |= variable
-            { start = Char.isAlphaNum
-            , inner = Char.isAlphaNum
-            , reserved = Set.empty
-            , expecting = ExpectedKeyName
-            }
-        |> andThen
-            (\keyname ->
-                case keyNameToCode keyname of
-                    Just code ->
-                        succeed code
+    inContext KeyLit <|
+        (succeed identity
+            |. Parser.symbol (Token "@" ExpectedExpr)
+            |= variable
+                { start = Char.isAlphaNum
+                , inner = Char.isAlphaNum
+                , reserved = Set.empty
+                , expecting = ExpectedKeyName
+                }
+            |> andThen
+                (\keyname ->
+                    case keyNameToCode keyname of
+                        Just code ->
+                            succeed code
 
-                    Nothing ->
-                        problem InvalidKey
-            )
+                        Nothing ->
+                            problem <| InvalidKey keyname
+                )
+        )
 
 
 
@@ -238,37 +262,39 @@ key =
 
 string : Parser String
 string =
-    succeed identity
-        |. token (Token "\"" ExpectedString)
-        |= loop [] stringHelp
-        |> andThen
-            (\maybe ->
-                case maybe of
-                    Just str ->
-                        succeed str
+    inContext StrLit <|
+        (succeed identity
+            |. token (Token "\"" ExpectedExpr)
+            |= loop [] stringHelp
+            |> andThen
+                (\maybe ->
+                    case maybe of
+                        Just str ->
+                            succeed str
 
-                    Nothing ->
-                        problem UnexpectedEOF
-            )
+                        Nothing ->
+                            problem UnexpectedStringEnd
+                )
+        )
 
 
 stringHelp : List String -> Parser (Step (List String) (Maybe String))
 stringHelp revChunks =
     oneOf
         [ succeed (\chunk -> Loop (chunk :: revChunks))
-            |. token (Token "\\" InvalidString)
+            |. token (Token "\\" InvalidStringEscape)
             |= oneOf
-                [ map (\_ -> "\n") (token (Token "n" InvalidString))
-                , map (\_ -> "\t") (token (Token "t" InvalidString))
-                , map (\_ -> "\"") (token (Token "\"" InvalidString))
-                , map (\_ -> "\\") (token (Token "\\" InvalidString))
+                [ map (\_ -> "\n") (token (Token "n" InvalidStringEscape))
+                , map (\_ -> "\t") (token (Token "t" InvalidStringEscape))
+                , map (\_ -> "\"") (token (Token "\"" InvalidStringEscape))
+                , map (\_ -> "\\") (token (Token "\\" InvalidStringEscape))
                 ]
-        , token (Token "\"" UnexpectedEOF)
+        , token (Token "\"" UnexpectedStringEnd)
             |> map
                 (\_ ->
                     List.reverse revChunks |> String.join "" |> Just |> Done
                 )
-        , map (\_ -> Done Nothing) (end UnexpectedEOF)
+        , map (\_ -> Done Nothing) (end UnexpectedStringEnd)
         , chompWhile isUninteresting
             |> getChompedString
             |> map (\chunk -> Loop (chunk :: revChunks))
