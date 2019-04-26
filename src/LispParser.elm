@@ -1,5 +1,6 @@
 module LispParser exposing
-    ( encodeSExpr
+    ( SExpr(..)
+    , encodeSExpr
     , errorToString
     , parse
     , parseToJson
