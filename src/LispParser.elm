@@ -3,7 +3,7 @@ module LispParser exposing
     , errorToString
     , maybeErrorToString
     , parse
-    , parseToStringRepr
+    , parseToJson
     )
 
 import Json.Encode as E
@@ -29,6 +29,7 @@ type Context
     = StrLit
     | ListLit
     | KeyLit
+    | TopCtx
 
 
 type alias Parser a =
@@ -48,19 +49,32 @@ type SExpr
 
 
 type alias ErrRepr =
-    { pos : Maybe ( Int, Int ), msg : String }
+    { pos : ( Int, Int )
+    , startPos : ( Int, Int )
+    , context : Context
+    , msg : String
+    }
 
 
-reprErrs : List Error -> ErrRepr
-reprErrs errs =
+reprErr : Error -> ErrRepr
+reprErr err =
     let
-        err =
-            pickErr errs
+        { row, col, contextStack } =
+            err
 
-        pos =
-            Maybe.map (\{ row, col } -> ( row, col )) err
+        ( startPos, context ) =
+            case List.head contextStack of
+                Just c ->
+                    ( ( c.row, c.col ), c.context )
+
+                Nothing ->
+                    ( ( 1, 1 ), TopCtx )
     in
-    { pos = pos, msg = maybeErrorToString err }
+    { pos = ( row, col )
+    , startPos = startPos
+    , context = context
+    , msg = errorToString err
+    }
 
 
 pickErr : List Error -> Maybe Error
@@ -121,20 +135,39 @@ maybeErrorToString err =
 
 
 encodeErrRepr : ErrRepr -> E.Value
-encodeErrRepr { pos, msg } =
-    E.object <|
-        List.concat
-            [ [ ( "msg", E.string msg )
-              ]
-            , case pos of
-                Nothing ->
-                    []
+encodeErrRepr { pos, startPos, context, msg } =
+    let
+        ( row, col ) =
+            pos
 
-                Just ( col, row ) ->
-                    [ ( "col", E.int col )
-                    , ( "row", E.int row )
-                    ]
-            ]
+        ( startRow, startCol ) =
+            startPos
+    in
+    E.object
+        [ ( "msg", E.string msg )
+        , ( "col", E.int col )
+        , ( "row", E.int row )
+        , ( "startRow", E.int row )
+        , ( "startCol", E.int col )
+        , ( "context", encodeContext context )
+        ]
+
+
+encodeContext : Context -> E.Value
+encodeContext context =
+    E.string <|
+        case context of
+            StrLit ->
+                "str"
+
+            ListLit ->
+                "list"
+
+            KeyLit ->
+                "key"
+
+            TopCtx ->
+                "top"
 
 
 encodeSExpr : SExpr -> E.Value
@@ -162,14 +195,27 @@ encodeSExpr sExpr =
                 ]
 
 
-parseToStringRepr : String -> String
-parseToStringRepr input =
+parseToJson : String -> E.Value
+parseToJson input =
     case parse input of
         Ok parsed ->
-            E.list encodeSExpr parsed |> E.encode 2
+            E.object
+                [ ( "status", E.string "ok" )
+                , ( "parsed", E.list encodeSExpr parsed )
+                ]
 
         Err errs ->
-            pickErr errs |> maybeErrorToString
+            E.object
+                [ ( "status", E.string "err" )
+                , ( "error"
+                  , case pickErr errs of
+                        Just err ->
+                            err |> reprErr |> encodeErrRepr
+
+                        Nothing ->
+                            E.null
+                  )
+                ]
 
 
 parse : String -> Result (List Error) (List SExpr)
@@ -178,9 +224,10 @@ parse input =
 
 
 parser =
-    succeed identity
-        |= program
-        |. end ExpectedExpr
+    inContext TopCtx <|
+        succeed identity
+            |= program
+            |. end ExpectedExpr
 
 
 program : Parser (List SExpr)

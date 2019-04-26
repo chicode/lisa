@@ -4,11 +4,12 @@ import Browser
 import Html exposing (Html, div, text, textarea)
 import Html.Attributes exposing (style, value)
 import Html.Events exposing (onInput)
+import Json.Encode as E
 import LispParser
 
 
 view : String -> Html String
-view model =
+view input =
     div []
         [ textarea
             [ onInput identity
@@ -20,7 +21,7 @@ view model =
             [ style "font-family" "monospace"
             , style "white-space" "pre"
             ]
-            [ text <| LispParser.parseToStringRepr model ]
+            [ text <| E.encode 2 <| LispParser.parseToJson input ]
         ]
 
 
