@@ -10,6 +10,7 @@ keyMappings =
     Dict.fromList listKeyMappings
 
 
+listKeyMappings : List ( String, Int )
 listKeyMappings =
     [ ( "cancel", 3 )
     , ( "help", 6 )

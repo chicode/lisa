@@ -1,7 +1,6 @@
 module LispParser exposing
     ( encodeSExpr
     , errorToString
-    , maybeErrorToString
     , parse
     , parseToJson
     )
@@ -143,11 +142,6 @@ errorToString err =
             "You should never see this error message"
 
 
-maybeErrorToString : Maybe Error -> String
-maybeErrorToString err =
-    err |> Maybe.map errorToString |> Maybe.withDefault ""
-
-
 encodeErrRepr : ErrRepr -> E.Value
 encodeErrRepr { pos, startPos, context, msg } =
     let
@@ -237,6 +231,7 @@ parse input =
     Parser.run parser input
 
 
+parser : Parser (List SExpr)
 parser =
     inContext TopCtx <|
         succeed identity

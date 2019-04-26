@@ -24,6 +24,7 @@ type Msg
     = Request String
 
 
+update : Msg -> () -> ( (), Cmd Msg )
 update msg () =
     case msg of
         Request s ->

@@ -25,6 +25,7 @@ view input =
         ]
 
 
+main : Program () String String
 main =
     Browser.sandbox
         { init = ""
