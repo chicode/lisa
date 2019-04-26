@@ -61,8 +61,23 @@ reprErr err =
         { row, col, contextStack } =
             err
 
+        -- hacky, I don't know why this is necessary
+        currentCtx =
+            case contextStack of
+                [] ->
+                    Nothing
+
+                top :: rest ->
+                    Just <|
+                        case top.context of
+                            ListLit ->
+                                List.head rest |> Maybe.withDefault top
+
+                            _ ->
+                                top
+
         ( startPos, context ) =
-            case List.head contextStack of
+            case currentCtx of
                 Just c ->
                     ( ( c.row, c.col ), c.context )
 
@@ -146,8 +161,8 @@ encodeErrRepr { pos, startPos, context, msg } =
         [ ( "msg", E.string msg )
         , ( "col", E.int col )
         , ( "row", E.int row )
-        , ( "startRow", E.int row )
-        , ( "startCol", E.int col )
+        , ( "startRow", E.int startRow )
+        , ( "startCol", E.int startCol )
         , ( "context", encodeContext context )
         ]
 
@@ -244,11 +259,11 @@ program =
 expr : Parser SExpr
 expr =
     oneOf
-        [ map Str string
+        [ map List list
         , map Symbol symbol
-        , map List list
         , map Num float
         , map Key key
+        , map Str string
         ]
 
 
@@ -269,14 +284,15 @@ symbol =
 
 list : Parser (List SExpr)
 list =
-    sequence
-        { start = Token "(" ExpectedExpr
-        , separator = Token "" Never
-        , end = Token ")" ExpectedListEnd
-        , spaces = spaces
-        , item = lazy (\_ -> expr)
-        , trailing = Optional
-        }
+    inContext ListLit <|
+        sequence
+            { start = Token "(" ExpectedExpr
+            , separator = Token "" Never
+            , end = Token ")" ExpectedListEnd
+            , spaces = spaces
+            , item = lazy (\_ -> expr)
+            , trailing = Optional
+            }
 
 
 key : Parser Int
