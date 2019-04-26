@@ -8,7 +8,6 @@ module LispParser exposing
 
 import Json.Encode as E
 import Keys exposing (keyNameToCode)
-import List.Extra
 import Maybe
 import Parser.Advanced as Parser exposing (..)
 import Set
