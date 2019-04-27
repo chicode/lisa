@@ -1,6 +1,6 @@
 module LispParser exposing
     ( SExpr(..)
-    , encodeSExpr
+    , encodeExpr
     , errorToString
     , parse
     , parseToJson
@@ -40,11 +40,18 @@ type alias Error =
 
 
 type SExpr
-    = List (List SExpr)
+    = List (List ExprNode)
     | Symbol String
     | Str String
     | Num Float
     | Key Int
+
+
+type alias ExprNode =
+    { startPos : ( Int, Int )
+    , expr : SExpr
+    , endPos : ( Int, Int )
+    }
 
 
 type alias ErrRepr =
@@ -179,29 +186,51 @@ encodeContext context =
                 "top"
 
 
-encodeSExpr : SExpr -> E.Value
+encodeExpr : ExprNode -> E.Value
+encodeExpr exprNode =
+    let
+        ( startRow, startCol ) =
+            exprNode.startPos
+
+        ( endRow, endCol ) =
+            exprNode.endPos
+    in
+    E.object <|
+        List.append (encodeSExpr exprNode.expr)
+            [ ( "startRow", E.int startRow )
+            , ( "startCol", E.int startCol )
+            , ( "endRow", E.int endRow )
+            , ( "endCol", E.int endCol )
+            ]
+
+
+encodeSExpr : SExpr -> List ( String, E.Value )
 encodeSExpr sExpr =
     case sExpr of
         List l ->
-            E.list encodeSExpr l
+            [ ( "type", E.string "list" )
+            , ( "children", E.list encodeExpr l )
+            ]
 
         Symbol sym ->
-            E.string sym
+            [ ( "type", E.string "symbol" )
+            , ( "ident", E.string sym )
+            ]
 
         Str str ->
-            E.object
-                [ ( "type", E.string "str" )
-                , ( "value", E.string str )
-                ]
+            [ ( "type", E.string "str" )
+            , ( "value", E.string str )
+            ]
 
         Num num ->
-            E.float num
+            [ ( "type", E.string "num" )
+            , ( "value", E.float num )
+            ]
 
         Key k ->
-            E.object
-                [ ( "type", E.string "key" )
-                , ( "value", E.int k )
-                ]
+            [ ( "type", E.string "key" )
+            , ( "code", E.int k )
+            ]
 
 
 parseToJson : String -> E.Value
@@ -210,7 +239,7 @@ parseToJson input =
         Ok parsed ->
             E.object
                 [ ( "status", E.string "ok" )
-                , ( "parsed", E.list encodeSExpr parsed )
+                , ( "parsed", E.list encodeExpr parsed )
                 ]
 
         Err errs ->
@@ -227,12 +256,12 @@ parseToJson input =
                 ]
 
 
-parse : String -> Result (List Error) (List SExpr)
+parse : String -> Result (List Error) (List ExprNode)
 parse input =
     Parser.run parser input
 
 
-parser : Parser (List SExpr)
+parser : Parser (List ExprNode)
 parser =
     inContext TopCtx <|
         succeed identity
@@ -240,7 +269,7 @@ parser =
             |. end ExpectedExpr
 
 
-program : Parser (List SExpr)
+program : Parser (List ExprNode)
 program =
     sequence
         { start = Token "" Never
@@ -252,15 +281,18 @@ program =
         }
 
 
-expr : Parser SExpr
+expr : Parser ExprNode
 expr =
-    oneOf
-        [ map List list
-        , map Symbol symbol
-        , map Num float
-        , map Key key
-        , map Str string
-        ]
+    succeed ExprNode
+        |= getPosition
+        |= oneOf
+            [ map List list
+            , map Symbol symbol
+            , map Num float
+            , map Key key
+            , map Str string
+            ]
+        |= getPosition
 
 
 float : Parser Float
@@ -278,7 +310,7 @@ symbol =
         }
 
 
-list : Parser (List SExpr)
+list : Parser (List ExprNode)
 list =
     inContext ListLit <|
         sequence
