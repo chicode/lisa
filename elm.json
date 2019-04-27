@@ -1,11 +1,12 @@
 {
     "type": "package",
-    "name": "coolreader18/elm-lisp-parser",
-    "summary": "A Lisp parser",
+    "name": "chicode/lisa",
+    "summary": "A Lisp dialect with a parser and compiler to JS",
     "license": "MIT",
     "version": "0.1.0",
     "exposed-modules": [
-        "LispParser"
+        "Parser",
+        "Compiler"
     ],
     "elm-version": "0.19.0 <= v < 0.20.0",
     "dependencies": {

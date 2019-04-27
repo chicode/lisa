@@ -1,4 +1,4 @@
-module LispParser exposing
+module Parser exposing
     ( ExprNode
     , SExpr(..)
     , encodeExpr
