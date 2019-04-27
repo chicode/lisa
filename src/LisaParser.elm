@@ -1,4 +1,4 @@
-module Parser exposing
+module LisaParser exposing
     ( ExprNode
     , SExpr(..)
     , encodeExpr

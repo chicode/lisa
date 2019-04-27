@@ -1,6 +1,6 @@
 module Compiler exposing (compile)
 
-import LispParser exposing (ExprNode, SExpr(..))
+import LisaParser exposing (ExprNode, SExpr(..))
 
 
 type alias Error =
@@ -22,6 +22,11 @@ errNode { startPos, endPos } msg =
     { msg = msg, startPos = startPos, endPos = endPos }
 
 
+foldListResult : (a -> b -> Result e b) -> b -> List a -> Result e b
+foldListResult func acc =
+    List.foldl (\a -> Result.andThen (func a)) (Ok acc)
+
+
 emptyProgram =
     { init = Nothing, update = Nothing, draw = Nothing }
 
@@ -33,16 +38,46 @@ compile ast =
         |> Result.andThen compileProgram
 
 
+boilerplate : String
+boilerplate =
+    """
+var funcs = Object.create(null)
+Object.assign(funcs, mars)
+"""
+
+
 compileProgram : Program -> Result Error String
 compileProgram program =
+    let
+        compileTopLevel name maybeBody pre =
+            case maybeBody of
+                Just body ->
+                    foldListResult
+                        (\expr compiled -> compileExpr expr |> Result.map ((++) compiled))
+                        pre
+                        body
+                        |> Result.map
+                            (\compiled ->
+                                "function " ++ name ++ "(){" ++ compiled ++ "}"
+                            )
+
+                Nothing ->
+                    Ok <| "function " ++ name ++ "(){}"
+    in
+    boilerplate
+        |> compileTopLevel "init" program.init
+        |> Result.andThen (compileTopLevel "update" program.update)
+        |> Result.andThen (compileTopLevel "draw" program.draw)
+
+
+compileExpr : ExprNode -> Result Error String
+compileExpr expr =
     Ok ""
 
 
 processProgram : List ExprNode -> Result Error Program
 processProgram ast =
-    List.foldl (\expr program -> Result.andThen (processTopLevel expr) program)
-        (Ok emptyProgram)
-        ast
+    ast |> foldListResult processTopLevel emptyProgram
 
 
 processTopLevel : ExprNode -> Program -> Result Error Program
