@@ -5,7 +5,8 @@ import Html exposing (Html, div, text, textarea)
 import Html.Attributes exposing (style, value)
 import Html.Events exposing (onInput)
 import Json.Encode as E
-import LispParser
+import Lisa
+import Lisa.Parser
 
 
 view : String -> Html String
@@ -21,7 +22,7 @@ view input =
             [ style "font-family" "monospace"
             , style "white-space" "pre"
             ]
-            [ text <| E.encode 2 <| LispParser.parseToJson input ]
+            [ text <| E.encode 2 <| Lisa.Parser.parseToJson input ]
         ]
 
 

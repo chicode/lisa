@@ -1,5 +1,6 @@
-module LisaParser exposing
-    ( ExprNode
+module Lisa.Parser exposing
+    ( AstNode
+    , Error
     , SExpr(..)
     , encodeExpr
     , errorToString
@@ -7,8 +8,9 @@ module LisaParser exposing
     , parseToJson
     )
 
+import Common exposing (LocatedNode)
 import Json.Encode as E
-import Keys exposing (keyNameToCode)
+import Lisa.Keys exposing (keyNameToCode)
 import Maybe
 import Parser.Advanced as Parser exposing (..)
 import Set
@@ -41,18 +43,15 @@ type alias Error =
 
 
 type SExpr
-    = List (List ExprNode)
+    = List (List AstNode)
     | Symbol String
     | Str String
     | Num Float
-    | Key Int
+    | Key String
 
 
-type alias ExprNode =
-    { startPos : ( Int, Int )
-    , expr : SExpr
-    , endPos : ( Int, Int )
-    }
+type alias AstNode =
+    LocatedNode SExpr
 
 
 type alias ErrRepr =
@@ -140,7 +139,7 @@ errorToString err =
             "You have an invalid key name: '"
                 ++ keyname
                 ++ "'. Did you mean: "
-                ++ (Keys.getClosestKeys keyname
+                ++ (Lisa.Keys.getClosestKeys keyname
                         |> List.map (\k -> "'" ++ k ++ "'")
                         |> List.intersperse " or "
                         |> List.foldr (++) ""
@@ -187,7 +186,7 @@ encodeContext context =
                 "top"
 
 
-encodeExpr : ExprNode -> E.Value
+encodeExpr : AstNode -> E.Value
 encodeExpr exprNode =
     let
         ( startRow, startCol ) =
@@ -197,7 +196,7 @@ encodeExpr exprNode =
             exprNode.endPos
     in
     E.object <|
-        List.append (encodeSExpr exprNode.expr)
+        List.append (encodeSExpr exprNode.node)
             [ ( "startRow", E.int startRow )
             , ( "startCol", E.int startCol )
             , ( "endRow", E.int endRow )
@@ -230,7 +229,7 @@ encodeSExpr sExpr =
 
         Key k ->
             [ ( "type", E.string "key" )
-            , ( "code", E.int k )
+            , ( "name", E.string k )
             ]
 
 
@@ -257,12 +256,12 @@ parseToJson input =
                 ]
 
 
-parse : String -> Result (List Error) (List ExprNode)
+parse : String -> Result (List Error) (List AstNode)
 parse input =
     Parser.run parser input
 
 
-parser : Parser (List ExprNode)
+parser : Parser (List AstNode)
 parser =
     inContext TopCtx <|
         succeed identity
@@ -270,7 +269,7 @@ parser =
             |. end ExpectedExpr
 
 
-program : Parser (List ExprNode)
+program : Parser (List AstNode)
 program =
     sequence
         { start = Token "" Never
@@ -282,9 +281,9 @@ program =
         }
 
 
-expr : Parser ExprNode
+expr : Parser AstNode
 expr =
-    succeed ExprNode
+    succeed LocatedNode
         |= getPosition
         |= oneOf
             [ map List list
@@ -311,7 +310,7 @@ symbol =
         }
 
 
-list : Parser (List ExprNode)
+list : Parser (List AstNode)
 list =
     inContext ListLit <|
         sequence
@@ -324,7 +323,7 @@ list =
             }
 
 
-key : Parser Int
+key : Parser String
 key =
     inContext KeyLit <|
         (succeed identity
@@ -335,15 +334,6 @@ key =
                 , reserved = Set.empty
                 , expecting = ExpectedKeyName
                 }
-            |> andThen
-                (\keyname ->
-                    case keyNameToCode keyname of
-                        Just code ->
-                            succeed code
-
-                        Nothing ->
-                            problem <| InvalidKey keyname
-                )
         )
 
 

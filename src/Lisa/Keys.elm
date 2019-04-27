@@ -1,4 +1,4 @@
-module Keys exposing (getClosestKeys, keyMappings, keyNameToCode)
+module Lisa.Keys exposing (getClosestKeys, keyMappings, keyNameToCode)
 
 import Dict exposing (Dict)
 import StringDistance
