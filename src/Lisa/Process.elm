@@ -10,6 +10,7 @@ import Common
         , mapListResult
         , mapNode
         )
+import Dict exposing (Dict)
 import Lisa.Keys exposing (keyNameToCode)
 import Lisa.Parser exposing (AstNode, SExpr(..))
 
@@ -33,8 +34,8 @@ type alias SymbolNode =
 
 
 type alias Program =
-    { vars : List ( SymbolNode, ExprNode )
-    , consts : List ( SymbolNode, ExprNode )
+    { vars : Dict String ( Location, ExprNode )
+    , consts : Dict String ( Location, ExprNode )
     , init : Maybe (List ExprNode)
     , update : Maybe (List ExprNode)
     , draw : Maybe (List ExprNode)
@@ -43,12 +44,17 @@ type alias Program =
 
 emptyProgram : Program
 emptyProgram =
-    { vars = []
-    , consts = []
+    { vars = Dict.empty
+    , consts = Dict.empty
     , init = Nothing
     , update = Nothing
     , draw = Nothing
     }
+
+
+varDeclared : String -> Program -> Bool
+varDeclared sym program =
+    Dict.member sym program.vars || Dict.member sym program.consts
 
 
 processProgram : List AstNode -> Result Error Program
@@ -56,8 +62,16 @@ processProgram ast =
     ast |> foldlListResult processTopLevel emptyProgram
 
 
-processExpr : AstNode -> Result Error ExprNode
-processExpr expr =
+noVarError : String -> String
+noVarError sym =
+    "Variable '"
+        ++ sym
+        ++ "' has not been declared. To access a variable you must first define "
+        ++ "it at the top level with (var varname initialvalue)"
+
+
+processExpr : Program -> AstNode -> Result Error ExprNode
+processExpr program expr =
     case expr.node of
         Str s ->
             Ok <| mapNode expr <| StrLit s
@@ -84,7 +98,11 @@ processExpr expr =
                                 ++ "?"
 
         Symbol sym ->
-            Ok <| mapNode expr <| GetVar sym
+            if varDeclared sym program then
+                Ok <| mapNode expr <| GetVar sym
+
+            else
+                Err <| errNode expr <| noVarError sym
 
         List list ->
             case list of
@@ -94,7 +112,7 @@ processExpr expr =
                 name :: args ->
                     case name.node of
                         Symbol sym ->
-                            processList expr.loc (mapNode name sym) args
+                            processList program expr.loc (mapNode name sym) args
 
                         _ ->
                             Err <|
@@ -102,35 +120,59 @@ processExpr expr =
                                     "First argument to a list must be a symbol"
 
 
-processList : Location -> SymbolNode -> List AstNode -> Result Error ExprNode
-processList loc name args =
+processList : Program -> Location -> SymbolNode -> List AstNode -> Result Error ExprNode
+processList program loc name args =
     case name.node of
         "if" ->
             case args of
                 cond :: body ->
                     Result.map2 (\c b -> LocatedNode loc <| If { cond = c, body = b })
-                        (processExpr cond)
-                        (mapListResult processExpr body)
+                        (processExpr program cond)
+                        (mapListResult (processExpr program) body)
 
                 [] ->
                     Err <| errNode name <| "If missing condition"
 
         "set" ->
-            processVar loc "set" args
-                |> Result.map (\( var, expr ) -> LocatedNode loc <| SetVar var expr)
+            processVar program loc "set" args
+                |> Result.andThen
+                    (\( var, expr ) ->
+                        if Dict.member var.node program.vars then
+                            Ok <| LocatedNode loc <| SetVar var expr
+
+                        else if Dict.member var.node program.consts then
+                            Err <|
+                                errNode var <|
+                                    "You cannot change the value of a const. "
+                                        ++ "Maybe try changing the (var "
+                                        ++ var.node
+                                        ++ ") declaration to a (const) declaration."
+
+                        else
+                            Err <|
+                                errNode var <|
+                                    "You have to declare a variable at the top level "
+                                        ++ "with (var varname initialvalue) "
+                                        ++ "before you can set its value."
+                    )
 
         _ ->
-            mapListResult processExpr args
+            mapListResult (processExpr program) args
                 |> Result.map (\body -> LocatedNode loc <| FuncCall name body)
 
 
-processVar : Location -> String -> List AstNode -> Result Error ( SymbolNode, ExprNode )
-processVar loc name args =
+processVar :
+    Program
+    -> Location
+    -> String
+    -> List AstNode
+    -> Result Error ( SymbolNode, ExprNode )
+processVar program loc name args =
     case args of
         var :: val :: [] ->
             case var.node of
                 Symbol sym ->
-                    processExpr val
+                    processExpr program val
                         |> Result.map
                             (\expr -> ( mapNode var sym, expr ))
 
@@ -188,7 +230,7 @@ processTopLevelList loc name args program =
             case body of
                 Nothing ->
                     args
-                        |> mapListResult processExpr
+                        |> mapListResult (processExpr program)
                         |> Result.map update
 
                 Just _ ->
@@ -212,12 +254,18 @@ processTopLevelList loc name args program =
                 \exprs -> { program | draw = Just exprs }
 
         "var" ->
-            processVar loc "var" args
-                |> Result.map (\var -> { program | vars = var :: program.vars })
+            processVar program loc "var" args
+                |> Result.map
+                    (\( var, expr ) ->
+                        { program | vars = Dict.insert var.node ( var.loc, expr ) program.vars }
+                    )
 
         "const" ->
-            processVar loc "const" args
-                |> Result.map (\const -> { program | consts = const :: program.consts })
+            processVar program loc "const" args
+                |> Result.map
+                    (\( const, expr ) ->
+                        { program | vars = Dict.insert const.node ( const.loc, expr ) program.consts }
+                    )
 
         _ ->
             Err <| Error loc topLevelError

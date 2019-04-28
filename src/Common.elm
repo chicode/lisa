@@ -6,6 +6,7 @@ module Common exposing
     , encodeWithLocation
     , errNode
     , foldlListResult
+    , foldrListResult
     , mapListResult
     , mapNode
     )
