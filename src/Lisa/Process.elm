@@ -34,6 +34,7 @@ type alias SymbolNode =
 
 type alias Program =
     { vars : List ( SymbolNode, ExprNode )
+    , consts : List ( SymbolNode, ExprNode )
     , init : Maybe (List ExprNode)
     , update : Maybe (List ExprNode)
     , draw : Maybe (List ExprNode)
@@ -42,7 +43,12 @@ type alias Program =
 
 emptyProgram : Program
 emptyProgram =
-    { vars = [], init = Nothing, update = Nothing, draw = Nothing }
+    { vars = []
+    , consts = []
+    , init = Nothing
+    , update = Nothing
+    , draw = Nothing
+    }
 
 
 processProgram : List AstNode -> Result Error Program
@@ -208,6 +214,10 @@ processTopLevelList loc name args program =
         "var" ->
             processVar loc "var" args
                 |> Result.map (\var -> { program | vars = var :: program.vars })
+
+        "const" ->
+            processVar loc "const" args
+                |> Result.map (\const -> { program | consts = const :: program.consts })
 
         _ ->
             Err <| Error loc topLevelError
