@@ -33,7 +33,7 @@ type alias SymbolNode =
 
 
 type alias Program =
-    { vars : List String
+    { vars : List ( SymbolNode, ExprNode )
     , init : Maybe (List ExprNode)
     , update : Maybe (List ExprNode)
     , draw : Maybe (List ExprNode)
@@ -110,35 +110,39 @@ processList loc name args =
                     Err <| errNode name <| "If missing condition"
 
         "set" ->
-            case args of
-                var :: val :: [] ->
-                    case var.node of
-                        Symbol sym ->
-                            processExpr val
-                                |> Result.map
-                                    (\expr ->
-                                        expr
-                                            |> SetVar (mapNode var sym)
-                                            |> LocatedNode loc
-                                    )
-
-                        _ ->
-                            Err <|
-                                errNode var
-                                    "First operand to 'set' must be a symbol"
-
-                var :: val :: rest ->
-                    Err <| Error loc "Too many operands to 'set'"
-
-                var :: [] ->
-                    Err <| Error loc "Missing what value to set the variable to"
-
-                [] ->
-                    Err <| Error loc "Missing operands to 'set'"
+            processVar loc "set" args
+                |> Result.map (\( var, expr ) -> LocatedNode loc <| SetVar var expr)
 
         _ ->
             mapListResult processExpr args
                 |> Result.map (\body -> LocatedNode loc <| FuncCall name body)
+
+
+processVar : Location -> String -> List AstNode -> Result Error ( SymbolNode, ExprNode )
+processVar loc name args =
+    case args of
+        var :: val :: [] ->
+            case var.node of
+                Symbol sym ->
+                    processExpr val
+                        |> Result.map
+                            (\expr -> ( mapNode var sym, expr ))
+
+                _ ->
+                    Err <|
+                        errNode var <|
+                            "First operand to '"
+                                ++ name
+                                ++ "' must be a symbol"
+
+        var :: val :: rest ->
+            Err <| Error loc <| "Too many operands to '" ++ name ++ "'"
+
+        var :: [] ->
+            Err <| Error loc "Missing what value to set the variable to"
+
+        [] ->
+            Err <| Error loc <| "Missing operands to '" ++ name ++ "'"
 
 
 topLevelError : String
@@ -157,7 +161,7 @@ processTopLevel expr program =
                 func :: args ->
                     case func.node of
                         Symbol sym ->
-                            processTopLevelCall (mapNode expr sym) args program
+                            processTopLevelList expr.loc (mapNode expr sym) args program
 
                         _ ->
                             Err <| errNode func topLevelError
@@ -166,8 +170,13 @@ processTopLevel expr program =
             Err <| errNode expr topLevelError
 
 
-processTopLevelCall : SymbolNode -> List AstNode -> Program -> Result Error Program
-processTopLevelCall name args program =
+processTopLevelList :
+    Location
+    -> SymbolNode
+    -> List AstNode
+    -> Program
+    -> Result Error Program
+processTopLevelList loc name args program =
     let
         processHandler body update =
             case body of
@@ -178,7 +187,7 @@ processTopLevelCall name args program =
 
                 Just _ ->
                     Err <|
-                        errNode name <|
+                        Error loc <|
                             "Duplicate "
                                 ++ name.node
                                 ++ " declaration"
@@ -196,5 +205,9 @@ processTopLevelCall name args program =
             processHandler program.draw <|
                 \exprs -> { program | draw = Just exprs }
 
+        "var" ->
+            processVar loc "var" args
+                |> Result.map (\var -> { program | vars = var :: program.vars })
+
         _ ->
-            Err <| errNode name topLevelError
+            Err <| Error loc topLevelError
