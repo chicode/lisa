@@ -1,35 +1,67 @@
 module Common exposing
     ( Error
     , LocatedNode
+    , Location
+    , encodeError
+    , encodeWithLocation
     , errNode
     , foldlListResult
     , mapListResult
     , mapNode
     )
 
+import Json.Encode as E
+
 
 type alias Error =
-    { msg : String
-    , startPos : ( Int, Int )
-    , endPos : ( Int, Int )
+    { loc : Location
+    , msg : String
+    }
+
+
+type alias Location =
+    { start : ( Int, Int )
+    , end : ( Int, Int )
     }
 
 
 type alias LocatedNode a =
-    { startPos : ( Int, Int )
+    { loc : Location
     , node : a
-    , endPos : ( Int, Int )
     }
 
 
-mapNode : b -> LocatedNode a -> LocatedNode b
-mapNode b { startPos, endPos } =
-    { startPos = startPos, node = b, endPos = endPos }
+encodeWithLocation : Location -> List ( String, E.Value ) -> E.Value
+encodeWithLocation loc obj =
+    let
+        ( startRow, startCol ) =
+            loc.start
+
+        ( endRow, endCol ) =
+            loc.end
+    in
+    E.object <|
+        List.append obj
+            [ ( "startRow", E.int startRow )
+            , ( "startCol", E.int startCol )
+            , ( "endRow", E.int endRow )
+            , ( "endCol", E.int endCol )
+            ]
+
+
+encodeError : Error -> E.Value
+encodeError { loc, msg } =
+    encodeWithLocation loc [ ( "msg", E.string msg ) ]
+
+
+mapNode : LocatedNode a -> b -> LocatedNode b
+mapNode { loc } b =
+    { loc = loc, node = b }
 
 
 errNode : LocatedNode a -> String -> Error
-errNode { startPos, endPos } msg =
-    { msg = msg, startPos = startPos, endPos = endPos }
+errNode { loc } msg =
+    { msg = msg, loc = loc }
 
 
 foldlListResult : (a -> b -> Result e b) -> b -> List a -> Result e b

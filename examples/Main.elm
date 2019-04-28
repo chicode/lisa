@@ -9,6 +9,14 @@ import Lisa
 import Lisa.Parser
 
 
+monodiv txt =
+    div
+        [ style "font-family" "monospace"
+        , style "white-space" "pre"
+        ]
+        [ text txt ]
+
+
 view : String -> Html String
 view input =
     div []
@@ -18,11 +26,8 @@ view input =
             , style "height" "200px"
             ]
             []
-        , div
-            [ style "font-family" "monospace"
-            , style "white-space" "pre"
-            ]
-            [ text <| E.encode 2 <| Lisa.Parser.parseToJson input ]
+        , monodiv <| Debug.toString <| Lisa.processString input
+        , monodiv <| E.encode 2 <| Lisa.Parser.parseToJson input
         ]
 
 

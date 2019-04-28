@@ -1,6 +1,6 @@
 module Lisa.Parser exposing
     ( AstNode
-    , Error
+    , ParserError
     , SExpr(..)
     , encodeExpr
     , errorToString
@@ -8,9 +8,15 @@ module Lisa.Parser exposing
     , parseToJson
     )
 
-import Common exposing (LocatedNode)
+import Common
+    exposing
+        ( Error
+        , LocatedNode
+        , Location
+        , encodeError
+        , encodeWithLocation
+        )
 import Json.Encode as E
-import Lisa.Keys exposing (keyNameToCode)
 import Maybe
 import Parser.Advanced as Parser exposing (..)
 import Set
@@ -23,7 +29,6 @@ type Problem
     | UnexpectedStringEnd
     | InvalidNumber
     | InvalidStringEscape
-    | InvalidKey String
     | Never
 
 
@@ -38,7 +43,7 @@ type alias Parser a =
     Parser.Parser Context Problem a
 
 
-type alias Error =
+type alias ParserError =
     DeadEnd Context Problem
 
 
@@ -54,23 +59,17 @@ type alias AstNode =
     LocatedNode SExpr
 
 
-type alias ErrRepr =
-    { pos : ( Int, Int )
-    , startPos : ( Int, Int )
-    , context : Context
-    , msg : String
-    }
+locatedParse : ( Int, Int ) -> a -> ( Int, Int ) -> LocatedNode a
+locatedParse start node end =
+    LocatedNode (Location start end) node
 
 
-reprErr : Error -> ErrRepr
+reprErr : ParserError -> Error
 reprErr err =
     let
-        { row, col, contextStack } =
-            err
-
         -- hacky, I don't know why this is necessary
         currentCtx =
-            case contextStack of
+            case err.contextStack of
                 [] ->
                     Nothing
 
@@ -91,14 +90,10 @@ reprErr err =
                 Nothing ->
                     ( ( 1, 1 ), TopCtx )
     in
-    { pos = ( row, col )
-    , startPos = startPos
-    , context = context
-    , msg = errorToString err
-    }
+    Error (Location startPos ( err.row, err.col )) (errorToString err)
 
 
-pickErr : List Error -> Maybe Error
+pickErr : List ParserError -> Maybe ParserError
 pickErr errs =
     errs
         |> List.sortBy
@@ -113,7 +108,7 @@ pickErr errs =
         |> List.head
 
 
-errorToString : Error -> String
+errorToString : ParserError -> String
 errorToString err =
     case err.problem of
         ExpectedExpr ->
@@ -135,38 +130,8 @@ errorToString err =
             "You have an invalid character after a '\\' in your string. To "
                 ++ "represent a raw '\\', you need to put 2 of them, like: '\\\\'"
 
-        InvalidKey keyname ->
-            "You have an invalid key name: '"
-                ++ keyname
-                ++ "'. Did you mean: "
-                ++ (Lisa.Keys.getClosestKeys keyname
-                        |> List.map (\k -> "'" ++ k ++ "'")
-                        |> List.intersperse " or "
-                        |> List.foldr (++) ""
-                   )
-                ++ "?"
-
         Never ->
             "You should never see this error message"
-
-
-encodeErrRepr : ErrRepr -> E.Value
-encodeErrRepr { pos, startPos, context, msg } =
-    let
-        ( row, col ) =
-            pos
-
-        ( startRow, startCol ) =
-            startPos
-    in
-    E.object
-        [ ( "msg", E.string msg )
-        , ( "col", E.int col )
-        , ( "row", E.int row )
-        , ( "startRow", E.int startRow )
-        , ( "startCol", E.int startCol )
-        , ( "context", encodeContext context )
-        ]
 
 
 encodeContext : Context -> E.Value
@@ -187,21 +152,8 @@ encodeContext context =
 
 
 encodeExpr : AstNode -> E.Value
-encodeExpr exprNode =
-    let
-        ( startRow, startCol ) =
-            exprNode.startPos
-
-        ( endRow, endCol ) =
-            exprNode.endPos
-    in
-    E.object <|
-        List.append (encodeSExpr exprNode.node)
-            [ ( "startRow", E.int startRow )
-            , ( "startCol", E.int startCol )
-            , ( "endRow", E.int endRow )
-            , ( "endCol", E.int endCol )
-            ]
+encodeExpr { loc, node } =
+    encodeWithLocation loc <| encodeSExpr node
 
 
 encodeSExpr : SExpr -> List ( String, E.Value )
@@ -242,23 +194,27 @@ parseToJson input =
                 , ( "parsed", E.list encodeExpr parsed )
                 ]
 
-        Err errs ->
+        Err err ->
             E.object
                 [ ( "status", E.string "err" )
-                , ( "error"
-                  , case pickErr errs of
-                        Just err ->
-                            err |> reprErr |> encodeErrRepr
-
-                        Nothing ->
-                            E.null
-                  )
+                , ( "error", encodeError err )
                 ]
 
 
-parse : String -> Result (List Error) (List AstNode)
+parse : String -> Result Error (List AstNode)
 parse input =
     Parser.run parser input
+        |> Result.mapError
+            (\err ->
+                pickErr err
+                    |> Maybe.withDefault
+                        { row = 0
+                        , col = 0
+                        , problem = Never
+                        , contextStack = []
+                        }
+                    |> reprErr
+            )
 
 
 parser : Parser (List AstNode)
@@ -283,7 +239,7 @@ program =
 
 expr : Parser AstNode
 expr =
-    succeed LocatedNode
+    succeed locatedParse
         |= getPosition
         |= oneOf
             [ map List list

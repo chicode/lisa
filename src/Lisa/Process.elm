@@ -1,20 +1,22 @@
-module Lisa.Process exposing (Expr(..), ExprNode, Program)
+module Lisa.Process exposing (Expr(..), ExprNode, Program, processProgram)
 
 import Common
     exposing
         ( Error
         , LocatedNode
+        , Location
         , errNode
         , foldlListResult
         , mapListResult
         , mapNode
         )
+import Lisa.Keys exposing (keyNameToCode)
 import Lisa.Parser exposing (AstNode, SExpr(..))
 
 
 type Expr
-    = SetVar SymbolNode
-    | GetVar SymbolNode
+    = SetVar SymbolNode ExprNode
+    | GetVar String
     | FuncCall SymbolNode (List ExprNode)
     | If { cond : ExprNode, body : List ExprNode }
     | StrLit String
@@ -50,7 +52,93 @@ processProgram ast =
 
 processExpr : AstNode -> Result Error ExprNode
 processExpr expr =
-    Ok <| mapNode (StrLit "") expr
+    case expr.node of
+        Str s ->
+            Ok <| mapNode expr <| StrLit s
+
+        Num n ->
+            Ok <| mapNode expr <| NumLit n
+
+        Key keyname ->
+            case keyNameToCode keyname of
+                Just code ->
+                    Ok <| mapNode expr <| KeyLit code
+
+                Nothing ->
+                    Err <|
+                        errNode expr <|
+                            "You have an invalid key name: '"
+                                ++ keyname
+                                ++ "'. Did you mean: "
+                                ++ (Lisa.Keys.getClosestKeys keyname
+                                        |> List.map (\k -> "'" ++ k ++ "'")
+                                        |> List.intersperse " or "
+                                        |> List.foldr (++) ""
+                                   )
+                                ++ "?"
+
+        Symbol sym ->
+            Ok <| mapNode expr <| GetVar sym
+
+        List list ->
+            case list of
+                [] ->
+                    Err <| errNode expr <| ""
+
+                name :: args ->
+                    case name.node of
+                        Symbol sym ->
+                            processList expr.loc (mapNode name sym) args
+
+                        _ ->
+                            Err <|
+                                errNode name <|
+                                    "First argument to a list must be a symbol"
+
+
+processList : Location -> SymbolNode -> List AstNode -> Result Error ExprNode
+processList loc name args =
+    case name.node of
+        "if" ->
+            case args of
+                cond :: body ->
+                    Result.map2 (\c b -> LocatedNode loc <| If { cond = c, body = b })
+                        (processExpr cond)
+                        (mapListResult processExpr body)
+
+                [] ->
+                    Err <| errNode name <| "If missing condition"
+
+        "set" ->
+            case args of
+                var :: val :: [] ->
+                    case var.node of
+                        Symbol sym ->
+                            processExpr val
+                                |> Result.map
+                                    (\expr ->
+                                        expr
+                                            |> SetVar (mapNode var sym)
+                                            |> LocatedNode loc
+                                    )
+
+                        _ ->
+                            Err <|
+                                errNode var
+                                    "First operand to 'set' must be a symbol"
+
+                var :: val :: rest ->
+                    Err <| Error loc "Too many operands to 'set'"
+
+                var :: [] ->
+                    Err <| Error loc "Missing what value to set the variable to"
+
+                [] ->
+                    Err <| Error loc "Missing operands to 'set'"
+
+        _ ->
+            mapListResult processExpr args
+                |> Result.map (\body -> LocatedNode loc <| FuncCall name body)
 
 
 topLevelError : String
@@ -69,7 +157,7 @@ processTopLevel expr program =
                 func :: args ->
                     case func.node of
                         Symbol sym ->
-                            processTopLevelCall (mapNode sym expr) args program
+                            processTopLevelCall (mapNode expr sym) args program
 
                         _ ->
                             Err <| errNode func topLevelError
