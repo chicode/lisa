@@ -19,7 +19,7 @@ import Common
 import Json.Encode as E
 import Maybe
 import Parser.Advanced as Parser exposing (..)
-import Set
+import Set exposing (Set)
 
 
 type Problem
@@ -259,11 +259,26 @@ float =
 symbol : Parser String
 symbol =
     variable
-        { start = Char.isAlpha
-        , inner = Char.isAlphaNum
+        { start = symbolHelper
+        , inner = \c -> Char.isDigit c || symbolHelper c
         , reserved = Set.empty
         , expecting = ExpectedExpr
         }
+
+
+validSymbols : Set Char
+validSymbols =
+    Set.fromList
+        [ '+'
+        , '-'
+        , '*'
+        , '/'
+        ]
+
+
+symbolHelper : Char -> Bool
+symbolHelper c =
+    Char.isAlpha c || Set.member c validSymbols
 
 
 list : Parser (List AstNode)

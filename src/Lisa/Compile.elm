@@ -38,11 +38,11 @@ compileProgram program =
                         Nothing ->
                             ""
             in
-            "function "
+            "\nfunction "
                 ++ name
                 ++ "(){"
                 ++ compiled
-                ++ "}\n"
+                ++ "}"
 
         assignVars vars =
             Dict.toList vars
@@ -74,5 +74,22 @@ compileExpr expr =
         KeyLit k ->
             E.encode 0 <| E.int k
 
-        _ ->
-            Debug.todo "other expressions"
+        SetVar var val ->
+            "vars[" ++ toJsonString var.node ++ "]=" ++ compileExpr val
+
+        GetVar var ->
+            "vars[" ++ toJsonString var ++ "]"
+
+        FuncCall func args ->
+            "funcs["
+                ++ toJsonString func.node
+                ++ "]("
+                ++ (List.map compileExpr args |> String.join ",")
+                ++ ")"
+
+        If { cond, body } ->
+            "if("
+                ++ compileExpr cond
+                ++ "){"
+                ++ (List.map compileExpr body |> String.join "\n")
+                ++ "}"
