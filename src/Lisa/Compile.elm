@@ -1,6 +1,7 @@
 module Lisa.Compile exposing (compile)
 
 import Common exposing (LocatedNode, foldlListResult, mapNode)
+import Dict
 import Json.Encode as E
 import Lisa.Process exposing (Expr(..), ExprNode, Program)
 
@@ -15,7 +16,13 @@ boilerplate =
     """
 var funcs = Object.create(null)
 Object.assign(funcs, mars)
+var vars = Object.create(null)
 """
+
+
+toJsonString : String -> String
+toJsonString s =
+    E.encode 0 <| E.string s
 
 
 compileProgram : Program -> String
@@ -35,9 +42,21 @@ compileProgram program =
                 ++ name
                 ++ "(){"
                 ++ compiled
-                ++ "}"
+                ++ "}\n"
+
+        assignVars vars =
+            Dict.toList vars
+                |> List.map
+                    (\( var, ( _, expr ) ) ->
+                        "vars["
+                            ++ toJsonString var
+                            ++ "]="
+                            ++ compileExpr expr
+                    )
+                |> String.join "\n"
     in
     boilerplate
+        ++ assignVars program.vars
         ++ compileTopLevel "init" program.init
         ++ compileTopLevel "update" program.update
         ++ compileTopLevel "draw" program.draw
@@ -47,7 +66,7 @@ compileExpr : ExprNode -> String
 compileExpr expr =
     case expr.node of
         StrLit s ->
-            E.encode 0 <| E.string s
+            toJsonString s
 
         NumLit n ->
             E.encode 0 <| E.float n

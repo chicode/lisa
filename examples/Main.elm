@@ -26,8 +26,15 @@ view input =
             , style "height" "200px"
             ]
             []
-        , monodiv <| Debug.toString <| Lisa.processString input
-        , monodiv <| E.encode 2 <| Lisa.Parser.parseToJson input
+        , monodiv <|
+            case Lisa.compileString input of
+                Ok js ->
+                    js
+
+                Err err ->
+                    err.msg
+
+        -- , monodiv <| E.encode 2 <| Lisa.Parser.parseToJson input
         ]
 
 

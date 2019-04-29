@@ -33,9 +33,13 @@ type alias SymbolNode =
     LocatedNode String
 
 
+type VarDecl
+    = Var
+    | Const
+
+
 type alias Program =
-    { vars : Dict String ( Location, ExprNode )
-    , consts : Dict String ( Location, ExprNode )
+    { vars : Dict String ( VarDecl, ExprNode )
     , init : Maybe (List ExprNode)
     , update : Maybe (List ExprNode)
     , draw : Maybe (List ExprNode)
@@ -45,16 +49,10 @@ type alias Program =
 emptyProgram : Program
 emptyProgram =
     { vars = Dict.empty
-    , consts = Dict.empty
     , init = Nothing
     , update = Nothing
     , draw = Nothing
     }
-
-
-varDeclared : String -> Program -> Bool
-varDeclared sym program =
-    Dict.member sym program.vars || Dict.member sym program.consts
 
 
 processProgram : List AstNode -> Result Error Program
@@ -98,7 +96,7 @@ processExpr program expr =
                                 ++ "?"
 
         Symbol sym ->
-            if varDeclared sym program then
+            if Dict.member sym program.vars then
                 Ok <| mapNode expr <| GetVar sym
 
             else
@@ -137,23 +135,26 @@ processList program loc name args =
             processVar program loc "set" args
                 |> Result.andThen
                     (\( var, expr ) ->
-                        if Dict.member var.node program.vars then
-                            Ok <| LocatedNode loc <| SetVar var expr
+                        case Dict.get var.node program.vars of
+                            Just ( varType, _ ) ->
+                                case varType of
+                                    Var ->
+                                        Ok <| LocatedNode loc <| SetVar var expr
 
-                        else if Dict.member var.node program.consts then
-                            Err <|
-                                errNode var <|
-                                    "You cannot change the value of a const. "
-                                        ++ "Maybe try changing the (var "
-                                        ++ var.node
-                                        ++ ") declaration to a (const) declaration."
+                                    Const ->
+                                        Err <|
+                                            errNode var <|
+                                                "You cannot change the value of a const. "
+                                                    ++ "Maybe try changing the (var "
+                                                    ++ var.node
+                                                    ++ ") declaration to a (const) declaration."
 
-                        else
-                            Err <|
-                                errNode var <|
-                                    "You have to declare a variable at the top level "
-                                        ++ "with (var varname initialvalue) "
-                                        ++ "before you can set its value."
+                            Nothing ->
+                                Err <|
+                                    errNode var <|
+                                        "You have to declare a variable at the top level "
+                                            ++ "with (var varname initialvalue) "
+                                            ++ "before you can set its value."
                     )
 
         _ ->
@@ -239,6 +240,13 @@ processTopLevelList loc name args program =
                             "Duplicate "
                                 ++ name.node
                                 ++ " declaration"
+
+        processVarDecl varType =
+            processVar program loc name.node args
+                |> Result.map
+                    (\( var, expr ) ->
+                        { program | vars = Dict.insert var.node ( varType, expr ) program.vars }
+                    )
     in
     case name.node of
         "init" ->
@@ -254,18 +262,10 @@ processTopLevelList loc name args program =
                 \exprs -> { program | draw = Just exprs }
 
         "var" ->
-            processVar program loc "var" args
-                |> Result.map
-                    (\( var, expr ) ->
-                        { program | vars = Dict.insert var.node ( var.loc, expr ) program.vars }
-                    )
+            processVarDecl Var
 
         "const" ->
-            processVar program loc "const" args
-                |> Result.map
-                    (\( const, expr ) ->
-                        { program | vars = Dict.insert const.node ( const.loc, expr ) program.consts }
-                    )
+            processVarDecl Const
 
         _ ->
             Err <| Error loc topLevelError
