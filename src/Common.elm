@@ -67,12 +67,12 @@ errNode { loc } msg =
 
 foldlListResult : (a -> b -> Result e b) -> b -> List a -> Result e b
 foldlListResult func acc =
-    List.foldl (\a -> Result.andThen (func a)) (Ok acc)
+    List.foldl (Result.andThen << func) (Ok acc)
 
 
 foldrListResult : (a -> b -> Result e b) -> b -> List a -> Result e b
 foldrListResult func acc =
-    List.foldr (\a -> Result.andThen (func a)) (Ok acc)
+    List.foldr (Result.andThen << func) (Ok acc)
 
 
 mapListResult : (a -> Result e b) -> List a -> Result e (List b)

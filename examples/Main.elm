@@ -27,9 +27,9 @@ view input =
             ]
             []
         , monodiv <|
-            case Lisa.compileString input of
-                Ok js ->
-                    js
+            case Lisa.processString input of
+                Ok result ->
+                    Debug.toString result
 
                 Err err ->
                     err.msg
