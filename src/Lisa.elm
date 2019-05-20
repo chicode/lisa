@@ -1,4 +1,4 @@
-module Lisa exposing (compileString, processString)
+module Lisa exposing (processString)
 
 import Common exposing (Error)
 import Lisa.Parser

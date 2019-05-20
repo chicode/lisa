@@ -7,6 +7,7 @@ import Html.Events exposing (onInput)
 import Json.Encode as E
 import Lisa
 import Lisa.Parser
+import Lisa.Process
 
 
 monodiv txt =
@@ -29,7 +30,7 @@ view input =
         , monodiv <|
             case Lisa.processString input of
                 Ok result ->
-                    Debug.toString result
+                    result |> Lisa.Process.encodeProgram |> E.encode 2
 
                 Err err ->
                     err.msg

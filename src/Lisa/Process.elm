@@ -1,4 +1,4 @@
-module Lisa.Process exposing (Expr(..), ExprNode, Program, processProgram)
+module Lisa.Process exposing (Expr(..), ExprNode, Program, encodeProgram, processProgram)
 
 import Common
     exposing
@@ -11,18 +11,27 @@ import Common
         , mapNode
         )
 import Dict exposing (Dict)
+import Json.Encode as E
 import Lisa.Keys exposing (keyNameToCode)
 import Lisa.Parser exposing (AstNode, SExpr(..))
+import Tuple
 
 
 type Expr
     = SetVar SymbolNode ExprNode
     | GetVar String
     | FuncCall SymbolNode (List ExprNode)
-    | If { cond : ExprNode, body : List ExprNode }
+    | If IfExpr
     | StrLit String
     | NumLit Float
     | KeyLit Int
+
+
+type alias IfExpr =
+    { cond : ExprNode
+    , body : ExprNode
+    , final : Maybe ExprNode
+    }
 
 
 type alias ExprNode =
@@ -38,20 +47,22 @@ type VarDecl
     | Const
 
 
+type alias FuncDecl =
+    { params : List String
+    , body : List ExprNode
+    }
+
+
 type alias Program =
     { vars : Dict String ( VarDecl, ExprNode )
-    , init : Maybe (List ExprNode)
-    , update : Maybe (List ExprNode)
-    , draw : Maybe (List ExprNode)
+    , funcs : Dict String FuncDecl
     }
 
 
 emptyProgram : Program
 emptyProgram =
     { vars = Dict.empty
-    , init = Nothing
-    , update = Nothing
-    , draw = Nothing
+    , funcs = Dict.empty
     }
 
 
@@ -122,14 +133,7 @@ processList : Program -> Location -> SymbolNode -> List AstNode -> Result Error 
 processList program loc name args =
     case name.node of
         "if" ->
-            case args of
-                cond :: body ->
-                    Result.map2 (\c b -> LocatedNode loc <| If { cond = c, body = b })
-                        (processExpr program cond)
-                        (mapListResult (processExpr program) body)
-
-                [] ->
-                    Err <| errNode name <| "If missing condition"
+            processIf program loc args
 
         "set" ->
             processVar program loc "set" args
@@ -159,7 +163,39 @@ processList program loc name args =
 
         _ ->
             mapListResult (processExpr program) args
-                |> Result.map (\body -> LocatedNode loc <| FuncCall name body)
+                |> Result.map (LocatedNode loc << FuncCall name)
+
+
+processIf : Program -> Location -> List AstNode -> Result Error ExprNode
+processIf program loc args =
+    let
+        err =
+            Error loc <|
+                "Expected 2 or 3 operands to 'if', got "
+                    ++ (List.length args |> String.fromInt)
+    in
+    case args of
+        [] ->
+            Err <| err
+
+        _ :: [] ->
+            Err <| err
+
+        cond :: body :: [] ->
+            Ok <| LocatedNode loc <| StrLit ""
+
+        _ ->
+            Err <| err
+
+
+processListLit : String -> AstNode -> Result Error (List AstNode)
+processListLit msg node =
+    case node.node of
+        List list ->
+            Ok list
+
+        _ ->
+            Err <| errNode node msg
 
 
 processVar :
@@ -196,7 +232,7 @@ processVar program loc name args =
 
 topLevelError : String
 topLevelError =
-    "Top level expression must be an var, init, update, or draw declaration"
+    "Top level expression must be an var, const, or function declaration"
 
 
 processTopLevel : AstNode -> Program -> Result Error Program
@@ -217,6 +253,59 @@ processTopLevel expr program =
 
         _ ->
             Err <| errNode expr topLevelError
+
+
+processDef : Location -> List AstNode -> Program -> Result Error Program
+processDef loc args program =
+    let
+        argsError =
+            Error loc <|
+                "Expected 2 or more operands to def: the function name, "
+                    ++ "a list of parameters, and then the function body"
+    in
+    case args of
+        [] ->
+            Err <| argsError
+
+        _ :: [] ->
+            Err <| argsError
+
+        nameNode :: paramsNode :: bodyNodes ->
+            let
+                mapper : String -> List String -> List ExprNode -> Program
+                mapper name params body =
+                    { program
+                        | funcs = Dict.insert name { params = params, body = body } program.funcs
+                    }
+            in
+            Result.map3
+                mapper
+                (processSymbol nameNode
+                    |> Result.andThen
+                        (\symbolNode ->
+                            if Dict.member symbolNode.node program.funcs then
+                                Err <|
+                                    Error loc "Cannot redefine previously defined function"
+
+                            else
+                                Ok symbolNode.node
+                        )
+                )
+                (paramsNode
+                    |> processListLit "Expected a list for the "
+                    |> Result.andThen (mapListResult (processSymbol >> Result.map .node))
+                )
+                (bodyNodes |> mapListResult (processExpr program))
+
+
+processSymbol : AstNode -> Result Error SymbolNode
+processSymbol node =
+    case node.node of
+        Symbol s ->
+            Ok <| mapNode node s
+
+        _ ->
+            Err <| errNode node "Expected a symbol"
 
 
 processTopLevelList :
@@ -249,17 +338,8 @@ processTopLevelList loc name args program =
                     )
     in
     case name.node of
-        "init" ->
-            processHandler program.init <|
-                \exprs -> { program | init = Just exprs }
-
-        "update" ->
-            processHandler program.update <|
-                \exprs -> { program | update = Just exprs }
-
-        "draw" ->
-            processHandler program.draw <|
-                \exprs -> { program | draw = Just exprs }
+        "def" ->
+            processDef loc args program
 
         "var" ->
             processVarDecl Var
@@ -269,3 +349,43 @@ processTopLevelList loc name args program =
 
         _ ->
             Err <| Error loc topLevelError
+
+
+encodeProgram : Program -> E.Value
+encodeProgram program =
+    E.object
+        [ ( "vars"
+          , E.dict identity
+                (\( declType, init ) ->
+                    E.object
+                        [ ( "type", encodeVarDecl declType )
+                        , ( "init", encodeExpr init )
+                        ]
+                )
+                program.vars
+          )
+        , ( "funcs", E.dict identity encodeFuncDecl program.funcs )
+        ]
+
+
+encodeVarDecl : VarDecl -> E.Value
+encodeVarDecl varDecl =
+    case varDecl of
+        Var ->
+            E.string "var"
+
+        Const ->
+            E.string "const"
+
+
+encodeFuncDecl : FuncDecl -> E.Value
+encodeFuncDecl { params, body } =
+    E.object
+        [ ( "params", E.list E.string params )
+        , ( "body", E.list encodeExpr body )
+        ]
+
+
+encodeExpr : ExprNode -> E.Value
+encodeExpr expr =
+    E.int 0
