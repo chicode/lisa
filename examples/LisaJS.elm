@@ -1,13 +1,13 @@
 port module LispParserLib exposing (main)
 
 import Json.Encode as E
-import LispParser
+import Lisa
 
 
 
 {-
    JS:
-    function parse(s) {
+    function processLisa(s) {
       let out;
       function sub(res) {
         out = res
@@ -30,12 +30,12 @@ update msg () =
         Request s ->
             ( ()
             , out <|
-                case LispParser.parse s of
+                case Lisa.processStringToJson s of
                     Ok parsed ->
-                        E.list LispParser.encodeSExpr parsed
+                        parsed
 
                     Err err ->
-                        E.string "woops"
+                        err
             )
 
 

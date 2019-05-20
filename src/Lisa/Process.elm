@@ -5,6 +5,7 @@ import Common
         ( Error
         , LocatedNode
         , Location
+        , encodeWithLocation
         , errNode
         , foldlListResult
         , mapListResult
@@ -21,17 +22,14 @@ type Expr
     = SetVar SymbolNode ExprNode
     | GetVar String
     | FuncCall SymbolNode (List ExprNode)
-    | If IfExpr
+    | If
+        { cond : ExprNode
+        , body : ExprNode
+        , final : Maybe ExprNode
+        }
     | StrLit String
     | NumLit Float
     | KeyLit Int
-
-
-type alias IfExpr =
-    { cond : ExprNode
-    , body : ExprNode
-    , final : Maybe ExprNode
-    }
 
 
 type alias ExprNode =
@@ -388,4 +386,60 @@ encodeFuncDecl { params, body } =
 
 encodeExpr : ExprNode -> E.Value
 encodeExpr expr =
-    E.int 0
+    encodeWithLocation expr.loc <|
+        case expr.node of
+            SetVar var val ->
+                [ ( "type", E.string "setVar" )
+                , ( "var", encodeSymbol var )
+                , ( "val", encodeExpr val )
+                ]
+
+            GetVar var ->
+                [ ( "type", E.string "getVar" )
+                , ( "var", encodeSymbol <| mapNode expr var )
+                ]
+
+            FuncCall func args ->
+                [ ( "type", E.string "funcCall" )
+                , ( "func", encodeSymbol func )
+                , ( "args", E.list encodeExpr args )
+                ]
+
+            If { cond, body, final } ->
+                [ ( "type", E.string "if" )
+                , ( "cond", encodeExpr cond )
+                , ( "body", encodeExpr body )
+                , ( "final", encodeMaybe encodeExpr final )
+                ]
+
+            StrLit s ->
+                [ ( "type", E.string "strLit" )
+                , ( "value", E.string s )
+                ]
+
+            NumLit n ->
+                [ ( "type", E.string "numLit" )
+                , ( "value", E.float n )
+                ]
+
+            KeyLit k ->
+                [ ( "type", E.string "numLit" )
+                , ( "value", E.int k )
+                ]
+
+
+encodeMaybe : (a -> E.Value) -> Maybe a -> E.Value
+encodeMaybe func maybe =
+    case maybe of
+        Just a ->
+            func a
+
+        Nothing ->
+            E.null
+
+
+encodeSymbol : SymbolNode -> E.Value
+encodeSymbol sym =
+    encodeWithLocation sym.loc
+        [ ( "name", E.string sym.node )
+        ]
