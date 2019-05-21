@@ -26,6 +26,7 @@ type Expr
     | StrLit String
     | NumLit Float
     | KeyLit Int
+    | ListLit (List ExprNode)
 
 
 type alias IfExpr =
@@ -129,8 +130,14 @@ processList loc name args =
                 |> Result.andThen
                     (\( var, expr ) -> Ok <| LocatedNode loc <| SetVar var expr)
 
+        "list" ->
+            args
+                |> mapListResult processExpr
+                |> Result.map (LocatedNode loc << ListLit)
+
         _ ->
-            mapListResult processExpr args
+            args
+                |> mapListResult processExpr
                 |> Result.map (LocatedNode loc << FuncCall name)
 
 
@@ -403,6 +410,11 @@ encodeExpr expr =
             KeyLit k ->
                 [ ( "type", E.string "numLit" )
                 , ( "value", E.int k )
+                ]
+
+            ListLit list ->
+                [ ( "type", E.string "list" )
+                , ( "elements", E.list encodeExpr list )
                 ]
 
 
