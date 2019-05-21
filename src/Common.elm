@@ -42,12 +42,15 @@ encodeWithLocation loc obj =
             loc.end
     in
     E.object <|
-        List.append obj
+        ( "location"
+        , E.object
             [ ( "startRow", E.int startRow )
             , ( "startCol", E.int startCol )
             , ( "endRow", E.int endRow )
             , ( "endCol", E.int endCol )
             ]
+        )
+            :: obj
 
 
 encodeError : Error -> E.Value
