@@ -22,14 +22,17 @@ type Expr
     = SetVar SymbolNode ExprNode
     | GetVar String
     | FuncCall SymbolNode (List ExprNode)
-    | If
-        { cond : ExprNode
-        , body : ExprNode
-        , final : Maybe ExprNode
-        }
+    | If IfExpr
     | StrLit String
     | NumLit Float
     | KeyLit Int
+
+
+type alias IfExpr =
+    { cond : ExprNode
+    , body : ExprNode
+    , final : Maybe ExprNode
+    }
 
 
 type alias ExprNode =
@@ -69,16 +72,8 @@ processProgram ast =
     ast |> foldlListResult processTopLevel emptyProgram
 
 
-noVarError : String -> String
-noVarError sym =
-    "Variable '"
-        ++ sym
-        ++ "' has not been declared. To access a variable you must first define "
-        ++ "it at the top level with (var varname initialvalue)"
-
-
-processExpr : Program -> AstNode -> Result Error ExprNode
-processExpr program expr =
+processExpr : AstNode -> Result Error ExprNode
+processExpr expr =
     case expr.node of
         Str s ->
             Ok <| mapNode expr <| StrLit s
@@ -105,11 +100,7 @@ processExpr program expr =
                                 ++ "?"
 
         Symbol sym ->
-            if Dict.member sym program.vars then
-                Ok <| mapNode expr <| GetVar sym
-
-            else
-                Err <| errNode expr <| noVarError sym
+            Ok <| mapNode expr <| GetVar sym
 
         List list ->
             case list of
@@ -119,7 +110,7 @@ processExpr program expr =
                 name :: args ->
                     case name.node of
                         Symbol sym ->
-                            processList program expr.loc (mapNode name sym) args
+                            processList expr.loc (mapNode name sym) args
 
                         _ ->
                             Err <|
@@ -127,45 +118,24 @@ processExpr program expr =
                                     "First argument to a list must be a symbol"
 
 
-processList : Program -> Location -> SymbolNode -> List AstNode -> Result Error ExprNode
-processList program loc name args =
+processList : Location -> SymbolNode -> List AstNode -> Result Error ExprNode
+processList loc name args =
     case name.node of
         "if" ->
-            processIf program loc args
+            processIf loc args
 
         "set" ->
-            processVar program loc "set" args
+            processVar loc "set" args
                 |> Result.andThen
-                    (\( var, expr ) ->
-                        case Dict.get var.node program.vars of
-                            Just ( varType, _ ) ->
-                                case varType of
-                                    Var ->
-                                        Ok <| LocatedNode loc <| SetVar var expr
-
-                                    Const ->
-                                        Err <|
-                                            errNode var <|
-                                                "You cannot change the value of a const. "
-                                                    ++ "Maybe try changing the (var "
-                                                    ++ var.node
-                                                    ++ ") declaration to a (const) declaration."
-
-                            Nothing ->
-                                Err <|
-                                    errNode var <|
-                                        "You have to declare a variable at the top level "
-                                            ++ "with (var varname initialvalue) "
-                                            ++ "before you can set its value."
-                    )
+                    (\( var, expr ) -> Ok <| LocatedNode loc <| SetVar var expr)
 
         _ ->
-            mapListResult (processExpr program) args
+            mapListResult processExpr args
                 |> Result.map (LocatedNode loc << FuncCall name)
 
 
-processIf : Program -> Location -> List AstNode -> Result Error ExprNode
-processIf program loc args =
+processIf : Location -> List AstNode -> Result Error ExprNode
+processIf loc args =
     let
         err =
             Error loc <|
@@ -173,17 +143,26 @@ processIf program loc args =
                     ++ (List.length args |> String.fromInt)
     in
     case args of
-        [] ->
-            Err <| err
+        condNode :: bodyNode :: rest ->
+            Result.map3
+                (\cond body final ->
+                    LocatedNode loc <| If <| IfExpr cond body final
+                )
+                (processExpr condNode)
+                (processExpr bodyNode)
+                (case rest of
+                    [] ->
+                        Ok Nothing
 
-        _ :: [] ->
-            Err <| err
+                    finalNode :: [] ->
+                        processExpr finalNode |> Result.map Just
 
-        cond :: body :: [] ->
-            Ok <| LocatedNode loc <| StrLit ""
+                    _ ->
+                        Err err
+                )
 
         _ ->
-            Err <| err
+            Err err
 
 
 processListLit : String -> AstNode -> Result Error (List AstNode)
@@ -197,17 +176,16 @@ processListLit msg node =
 
 
 processVar :
-    Program
-    -> Location
+    Location
     -> String
     -> List AstNode
     -> Result Error ( SymbolNode, ExprNode )
-processVar program loc name args =
+processVar loc name args =
     case args of
         var :: val :: [] ->
             case var.node of
                 Symbol sym ->
-                    processExpr program val
+                    processExpr val
                         |> Result.map
                             (\expr -> ( mapNode var sym, expr ))
 
@@ -293,7 +271,7 @@ processDef loc args program =
                     |> processListLit "Expected a list for the "
                     |> Result.andThen (mapListResult (processSymbol >> Result.map .node))
                 )
-                (bodyNodes |> mapListResult (processExpr program))
+                (bodyNodes |> mapListResult processExpr)
 
 
 processSymbol : AstNode -> Result Error SymbolNode
@@ -318,7 +296,7 @@ processTopLevelList loc name args program =
             case body of
                 Nothing ->
                     args
-                        |> mapListResult (processExpr program)
+                        |> mapListResult processExpr
                         |> Result.map update
 
                 Just _ ->
@@ -329,7 +307,7 @@ processTopLevelList loc name args program =
                                 ++ " declaration"
 
         processVarDecl varType =
-            processVar program loc name.node args
+            processVar loc name.node args
                 |> Result.map
                     (\( var, expr ) ->
                         { program | vars = Dict.insert var.node ( varType, expr ) program.vars }
