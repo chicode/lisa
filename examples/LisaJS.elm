@@ -1,4 +1,4 @@
-port module LispParserLib exposing (main)
+port module LisaJS exposing (main)
 
 import Json.Encode as E
 import Lisa
