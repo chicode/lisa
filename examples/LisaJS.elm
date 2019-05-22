@@ -1,6 +1,8 @@
 port module LisaJS exposing (main)
 
+import Dict
 import Json.Encode as E
+import Keys
 import Lisa
 
 
@@ -30,7 +32,10 @@ update msg () =
         Request s ->
             ( ()
             , out <|
-                case Lisa.processStringToJson s of
+                case
+                    Lisa.processStringToJson s
+                        { macros = Dict.fromList [ ( "key", Keys.keyMacro ) ] }
+                of
                     Ok parsed ->
                         parsed
 

@@ -23,21 +23,21 @@ module Lisa exposing (processString, processStringToJson)
 import Common exposing (Error)
 import Json.Encode as E
 import Lisa.Parser
-import Lisa.Process
+import Lisa.Process exposing (Context)
 
 
 {-| Parse a string into a program
 -}
-processString : String -> Result Error Lisa.Process.Program
-processString input =
+processString : String -> Context -> Result Error Lisa.Process.Program
+processString input ctx =
     Lisa.Parser.parse input
-        |> Result.andThen Lisa.Process.processProgram
+        |> Result.andThen (Lisa.Process.processProgram ctx)
 
 
 {-| Parse a string into a Json representation of a program
 -}
-processStringToJson : String -> Result E.Value E.Value
-processStringToJson input =
-    processString input
+processStringToJson : String -> Context -> Result E.Value E.Value
+processStringToJson input ctx =
+    processString input ctx
         |> Result.map Lisa.Process.encodeProgram
         |> Result.mapError Common.encodeError

@@ -1,6 +1,9 @@
-module Lisa.Keys exposing (getClosestKeys, keyMappings, keyNameToCode)
+module Keys exposing (getClosestKeys, keyMacro, keyMappings, keyNameToCode)
 
+import Common exposing (Error, LocatedNode, errNode, mapNode)
 import Dict exposing (Dict)
+import Lisa.Parser exposing (SExpr(..))
+import Lisa.Process exposing (Expr(..), MacroHandler)
 import StringDistance
 import Tuple
 
@@ -37,16 +40,16 @@ listKeyMappings =
     , ( "printscreen", 44 )
     , ( "insert", 45 )
     , ( "delete", 46 )
-    , ( "0", 48 )
-    , ( "1", 49 )
-    , ( "2", 50 )
-    , ( "3", 51 )
-    , ( "4", 52 )
-    , ( "5", 53 )
-    , ( "6", 54 )
-    , ( "7", 55 )
-    , ( "8", 56 )
-    , ( "9", 57 )
+    , ( "n0", 48 )
+    , ( "n1", 49 )
+    , ( "n2", 50 )
+    , ( "n3", 51 )
+    , ( "n4", 52 )
+    , ( "n5", 53 )
+    , ( "n6", 54 )
+    , ( "n7", 55 )
+    , ( "n8", 56 )
+    , ( "n9", 57 )
     , ( "semicolon", 59 )
     , ( "equals", 61 )
     , ( "a", 65 )
@@ -144,3 +147,36 @@ getClosestKeys name =
 keyNameToCode : String -> Maybe Int
 keyNameToCode name =
     Dict.get name keyMappings
+
+
+errorMessage : String -> String
+errorMessage keyname =
+    "You have an invalid key name: '"
+        ++ keyname
+        ++ "'. Did you mean: "
+        ++ (getClosestKeys keyname
+                |> List.map (\k -> "'" ++ k ++ "'")
+                |> List.intersperse " or "
+                |> List.foldr (++) ""
+           )
+        ++ "?"
+
+
+keyMacro : MacroHandler
+keyMacro processExpr loc args =
+    case args of
+        keyNode :: [] ->
+            case keyNode.node of
+                Symbol sym ->
+                    case keyNameToCode sym of
+                        Just code ->
+                            Ok <| LocatedNode loc <| NumLit <| toFloat code
+
+                        Nothing ->
+                            Err <| errNode keyNode <| errorMessage sym
+
+                _ ->
+                    Err <| Error loc "Operand to 'key' must be a symbol"
+
+        _ ->
+            Err <| Error loc "Expected exactly one operand to 'key'"

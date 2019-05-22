@@ -24,7 +24,6 @@ import Set exposing (Set)
 
 type Problem
     = ExpectedExpr
-    | ExpectedKeyName
     | ExpectedListEnd
     | UnexpectedStringEnd
     | InvalidNumber
@@ -35,7 +34,6 @@ type Problem
 type Context
     = StrLit
     | ListLit
-    | KeyLit
     | TopCtx
 
 
@@ -52,7 +50,6 @@ type SExpr
     | Symbol String
     | Str String
     | Num Float
-    | Key String
 
 
 type alias AstNode =
@@ -94,18 +91,8 @@ reprErr err =
 
 
 pickErr : List ParserError -> Maybe ParserError
-pickErr errs =
-    errs
-        |> List.sortBy
-            (\err ->
-                case err.problem of
-                    ExpectedKeyName ->
-                        1
-
-                    _ ->
-                        10
-            )
-        |> List.head
+pickErr =
+    List.head
 
 
 errorToString : ParserError -> String
@@ -113,9 +100,6 @@ errorToString err =
     case err.problem of
         ExpectedExpr ->
             "Expected an expression, like a list: (a b c), string: \"abc\", or number: 123"
-
-        ExpectedKeyName ->
-            "Expected the name of a key. There cannot be any spaces between the '@' and the key name"
 
         ExpectedListEnd ->
             "Expected the end of a list, but couldn't find it. Try adding a ')'."
@@ -143,9 +127,6 @@ encodeContext context =
 
             ListLit ->
                 "list"
-
-            KeyLit ->
-                "key"
 
             TopCtx ->
                 "top"
@@ -177,11 +158,6 @@ encodeSExpr sExpr =
         Num num ->
             [ ( "type", E.string "num" )
             , ( "value", E.float num )
-            ]
-
-        Key k ->
-            [ ( "type", E.string "key" )
-            , ( "name", E.string k )
             ]
 
 
@@ -245,7 +221,6 @@ expr =
             [ map List list
             , map Symbol symbol
             , map Num float
-            , map Key key
             , map Str string
             ]
         |= getPosition
@@ -296,20 +271,6 @@ list =
             , item = lazy (\_ -> expr)
             , trailing = Optional
             }
-
-
-key : Parser String
-key =
-    inContext KeyLit <|
-        (succeed identity
-            |. Parser.symbol (Token "@" ExpectedExpr)
-            |= variable
-                { start = Char.isAlphaNum
-                , inner = Char.isAlphaNum
-                , reserved = Set.empty
-                , expecting = ExpectedKeyName
-                }
-        )
 
 
 
