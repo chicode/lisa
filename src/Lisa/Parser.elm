@@ -13,6 +13,7 @@ import Common
         ( Error
         , LocatedNode
         , Location
+        , Recoverable(..)
         , encodeError
         , encodeWithLocation
         )
@@ -87,12 +88,16 @@ reprErr err =
                 Nothing ->
                     ( ( 1, 1 ), TopCtx )
     in
-    Error (Location startPos ( err.row, err.col )) (errorToString err)
+    Error
+        (case err.problem of
+            ExpectedListEnd ->
+                Recoverable
 
-
-pickErr : List ParserError -> Maybe ParserError
-pickErr =
-    List.head
+            _ ->
+                Nonrecoverable
+        )
+        (Location startPos ( err.row, err.col ))
+        (errorToString err)
 
 
 errorToString : ParserError -> String
@@ -182,7 +187,7 @@ parse input =
     Parser.run parser input
         |> Result.mapError
             (\err ->
-                pickErr err
+                List.head err
                     |> Maybe.withDefault
                         { row = 0
                         , col = 0
@@ -218,10 +223,10 @@ expr =
     succeed locatedParse
         |= getPosition
         |= oneOf
-            [ map List list
-            , map Symbol symbol
+            [ map Symbol symbol
             , map Num float
             , map Str string
+            , map List list
             ]
         |= getPosition
 
@@ -263,14 +268,30 @@ symbolHelper c =
 list : Parser (List AstNode)
 list =
     inContext ListLit <|
-        sequence
-            { start = Token "(" ExpectedExpr
-            , separator = Token "" Never
-            , end = Token ")" ExpectedListEnd
-            , spaces = spaces
-            , item = lazy (\_ -> expr)
-            , trailing = Optional
-            }
+        (succeed identity
+            |. token (Token "(" ExpectedExpr)
+            |= loop [] listHelp
+            |> andThen
+                (\maybeElems ->
+                    case maybeElems of
+                        Just elems ->
+                            succeed elems
+
+                        Nothing ->
+                            problem ExpectedListEnd
+                )
+        )
+
+
+listHelp : List AstNode -> Parser (Step (List AstNode) (Maybe (List AstNode)))
+listHelp revElems =
+    succeed identity
+        |. spaces
+        |= oneOf
+            [ lazy (\_ -> expr) |> map (\elem -> Loop <| elem :: revElems)
+            , token (Token ")" ExpectedListEnd) |> map (\_ -> Done <| Just <| List.reverse revElems)
+            , end Never |> map (\_ -> Done Nothing)
+            ]
 
 
 

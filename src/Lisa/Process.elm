@@ -14,10 +14,11 @@ import Common
         , LocatedNode
         , Location
         , encodeWithLocation
-        , errNode
         , foldlListResult
         , mapListResult
         , mapNode
+        , nonRecovErrNode
+        , nonRecovError
         )
 import Dict exposing (Dict)
 import Json.Encode as E
@@ -107,7 +108,7 @@ processExpr ctx expr =
         List list ->
             case list of
                 [] ->
-                    Err <| errNode expr <| ""
+                    Err <| nonRecovErrNode expr <| ""
 
                 name :: args ->
                     case name.node of
@@ -116,7 +117,7 @@ processExpr ctx expr =
 
                         _ ->
                             Err <|
-                                errNode name <|
+                                nonRecovErrNode name <|
                                     "First argument to a list must be a symbol"
 
 
@@ -151,7 +152,7 @@ processIf : Context -> Location -> List AstNode -> Result Error ExprNode
 processIf ctx loc args =
     let
         err =
-            Error loc <|
+            nonRecovError loc <|
                 "Expected 2 or 3 operands to 'if', got "
                     ++ (List.length args |> String.fromInt)
     in
@@ -185,7 +186,7 @@ processListLit msg node =
             Ok list
 
         _ ->
-            Err <| errNode node msg
+            Err <| nonRecovErrNode node msg
 
 
 processVar :
@@ -205,19 +206,19 @@ processVar ctx loc name args =
 
                 _ ->
                     Err <|
-                        errNode var <|
+                        nonRecovErrNode var <|
                             "First operand to '"
                                 ++ name
                                 ++ "' must be a symbol"
 
         var :: val :: rest ->
-            Err <| Error loc <| "Too many operands to '" ++ name ++ "'"
+            Err <| nonRecovError loc <| "Too many operands to '" ++ name ++ "'"
 
         var :: [] ->
-            Err <| Error loc "Missing what value to set the variable to"
+            Err <| nonRecovError loc "Missing what value to set the variable to"
 
         [] ->
-            Err <| Error loc <| "Missing operands to '" ++ name ++ "'"
+            Err <| nonRecovError loc <| "Missing operands to '" ++ name ++ "'"
 
 
 topLevelError : String
@@ -231,7 +232,7 @@ processTopLevel ctx expr program =
         List children ->
             case children of
                 [] ->
-                    Err <| errNode expr "Top level list cannot be empty"
+                    Err <| nonRecovErrNode expr "Top level list cannot be empty"
 
                 func :: args ->
                     case func.node of
@@ -239,17 +240,17 @@ processTopLevel ctx expr program =
                             processTopLevelList ctx expr.loc (mapNode expr sym) args program
 
                         _ ->
-                            Err <| errNode func topLevelError
+                            Err <| nonRecovErrNode func topLevelError
 
         _ ->
-            Err <| errNode expr topLevelError
+            Err <| nonRecovErrNode expr topLevelError
 
 
 processDef : Context -> Location -> List AstNode -> Program -> Result Error Program
 processDef ctx loc args program =
     let
         argsError =
-            Error loc <|
+            nonRecovError loc <|
                 "Expected 2 or more operands to def: the function name, "
                     ++ "a list of parameters, and then the function body"
     in
@@ -275,7 +276,9 @@ processDef ctx loc args program =
                         (\symbolNode ->
                             if Dict.member symbolNode.node program.funcs then
                                 Err <|
-                                    Error loc "Cannot redefine previously defined function"
+                                    nonRecovError
+                                        loc
+                                        "Cannot redefine previously defined function"
 
                             else
                                 Ok symbolNode.node
@@ -295,7 +298,7 @@ processSymbol node =
             Ok <| mapNode node s
 
         _ ->
-            Err <| errNode node "Expected a symbol"
+            Err <| nonRecovErrNode node "Expected a symbol"
 
 
 processTopLevelList :
@@ -316,7 +319,7 @@ processTopLevelList ctx loc name args program =
 
                 Just _ ->
                     Err <|
-                        Error loc <|
+                        nonRecovError loc <|
                             "Duplicate "
                                 ++ name.node
                                 ++ " declaration"
@@ -339,7 +342,7 @@ processTopLevelList ctx loc name args program =
             processVarDecl Const
 
         _ ->
-            Err <| Error loc topLevelError
+            Err <| nonRecovError loc topLevelError
 
 
 encodeProgram : Program -> E.Value

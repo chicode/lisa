@@ -2,6 +2,7 @@ module Common exposing
     ( Error
     , LocatedNode
     , Location
+    , Recoverable(..)
     , encodeError
     , encodeWithLocation
     , errNode
@@ -9,13 +10,21 @@ module Common exposing
     , foldrListResult
     , mapListResult
     , mapNode
+    , nonRecovErrNode
+    , nonRecovError
     )
 
 import Json.Encode as E
 
 
+type Recoverable
+    = Recoverable
+    | Nonrecoverable
+
+
 type alias Error =
-    { loc : Location
+    { recoverable : Recoverable
+    , loc : Location
     , msg : String
     }
 
@@ -54,8 +63,18 @@ encodeWithLocation loc obj =
 
 
 encodeError : Error -> E.Value
-encodeError { loc, msg } =
-    encodeWithLocation loc [ ( "msg", E.string msg ) ]
+encodeError { recoverable, loc, msg } =
+    encodeWithLocation loc
+        [ ( "recoverable"
+          , case recoverable of
+                Recoverable ->
+                    E.bool True
+
+                Nonrecoverable ->
+                    E.bool False
+          )
+        , ( "msg", E.string msg )
+        ]
 
 
 mapNode : LocatedNode a -> b -> LocatedNode b
@@ -63,9 +82,9 @@ mapNode { loc } b =
     { loc = loc, node = b }
 
 
-errNode : LocatedNode a -> String -> Error
-errNode { loc } msg =
-    { msg = msg, loc = loc }
+errNode : Recoverable -> LocatedNode a -> String -> Error
+errNode recov { loc } msg =
+    Error recov loc msg
 
 
 foldlListResult : (a -> b -> Result e b) -> b -> List a -> Result e b
@@ -81,3 +100,13 @@ foldrListResult func acc =
 mapListResult : (a -> Result e b) -> List a -> Result e (List b)
 mapListResult func =
     foldrListResult (\a list -> func a |> Result.map (\b -> b :: list)) []
+
+
+nonRecovError : Location -> String -> Error
+nonRecovError =
+    Error Nonrecoverable
+
+
+nonRecovErrNode : LocatedNode a -> String -> Error
+nonRecovErrNode =
+    errNode Nonrecoverable

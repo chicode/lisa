@@ -1,6 +1,14 @@
 module Keys exposing (getClosestKeys, keyMacro, keyMappings, keyNameToCode)
 
-import Common exposing (Error, LocatedNode, errNode, mapNode)
+import Common
+    exposing
+        ( Error
+        , LocatedNode
+        , errNode
+        , mapNode
+        , nonRecovErrNode
+        , nonRecovError
+        )
 import Dict exposing (Dict)
 import Lisa.Parser exposing (SExpr(..))
 import Lisa.Process exposing (Expr(..), MacroHandler)
@@ -173,10 +181,10 @@ keyMacro processExpr loc args =
                             Ok <| LocatedNode loc <| NumLit <| toFloat code
 
                         Nothing ->
-                            Err <| errNode keyNode <| errorMessage sym
+                            Err <| nonRecovErrNode keyNode <| errorMessage sym
 
                 _ ->
-                    Err <| Error loc "Operand to 'key' must be a symbol"
+                    Err <| nonRecovError loc "Operand to 'key' must be a symbol"
 
         _ ->
-            Err <| Error loc "Expected exactly one operand to 'key'"
+            Err <| nonRecovError loc "Expected exactly one operand to 'key'"
