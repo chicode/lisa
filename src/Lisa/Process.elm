@@ -32,6 +32,7 @@ type Expr
     | FuncCall SymbolNode (List ExprNode)
     | If IfExpr
     | Do (List ExprNode)
+    | Func FuncDecl
     | StrLit String
     | NumLit Float
     | KeyLit Int
@@ -143,6 +144,9 @@ processList ctx loc name args =
                 |> mapListResult (processExpr ctx)
                 |> Result.map (LocatedNode loc << Do)
 
+        "func" ->
+            processFunc ctx loc args |> Result.map (LocatedNode loc << Func)
+
         _ ->
             case Dict.get name.node ctx.macros of
                 Just macro ->
@@ -252,31 +256,35 @@ processTopLevel ctx expr program =
             Err <| nonRecovErrNode expr topLevelError
 
 
-processDef : Context -> Location -> List AstNode -> Program -> Result Error Program
-processDef ctx loc args program =
-    let
-        argsError =
-            nonRecovError loc <|
-                "Expected 2 or more operands to def: the function name, "
-                    ++ "a list of parameters, and then the function body"
-    in
+processFunc : Context -> Location -> List AstNode -> Result Error FuncDecl
+processFunc ctx loc args =
     case args of
         [] ->
-            Err <| argsError
+            Err <| nonRecovError loc "Missing the argument list to function"
 
-        _ :: [] ->
-            Err <| argsError
+        paramsNode :: bodyNodes ->
+            Result.map2 FuncDecl
+                (paramsNode
+                    |> processListLit "Expected a list for the parameters list"
+                    |> Result.andThen (mapListResult (processSymbol >> Result.map .node))
+                )
+                (bodyNodes |> mapListResult (processExpr ctx))
 
-        nameNode :: paramsNode :: bodyNodes ->
-            let
-                mapper : String -> List String -> List ExprNode -> Program
-                mapper name params body =
-                    { program
-                        | funcs = Dict.insert name { params = params, body = body } program.funcs
-                    }
-            in
-            Result.map3
-                mapper
+
+processDefunc : Context -> Location -> List AstNode -> Program -> Result Error Program
+processDefunc ctx loc args program =
+    case args of
+        [] ->
+            Err <|
+                nonRecovError loc <|
+                    "Expected 2 or more operands to defunc: the function name, "
+                        ++ "a list of parameters, and then the function body"
+
+        nameNode :: rest ->
+            Result.map2
+                (\name func ->
+                    { program | funcs = program.funcs |> Dict.insert name func }
+                )
                 (processSymbol nameNode
                     |> Result.andThen
                         (\symbolNode ->
@@ -290,11 +298,7 @@ processDef ctx loc args program =
                                 Ok symbolNode.node
                         )
                 )
-                (paramsNode
-                    |> processListLit "Expected a list for the "
-                    |> Result.andThen (mapListResult (processSymbol >> Result.map .node))
-                )
-                (bodyNodes |> mapListResult (processExpr ctx))
+                (processFunc ctx loc rest)
 
 
 processSymbol : AstNode -> Result Error SymbolNode
@@ -338,8 +342,8 @@ processTopLevelList ctx loc name args program =
                     )
     in
     case name.node of
-        "def" ->
-            processDef ctx loc args program
+        "defunc" ->
+            processDefunc ctx loc args program
 
         "var" ->
             processVarDecl Var
@@ -417,6 +421,11 @@ encodeExpr expr =
             Do body ->
                 [ ( "type", E.string "do" )
                 , ( "body", E.list encodeExpr body )
+                ]
+
+            Func func ->
+                [ ( "type", E.string "func" )
+                , ( "func", encodeFuncDecl func )
                 ]
 
             StrLit s ->
