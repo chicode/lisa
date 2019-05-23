@@ -31,6 +31,7 @@ type Expr
     | GetVar String
     | FuncCall SymbolNode (List ExprNode)
     | If IfExpr
+    | Do (List ExprNode)
     | StrLit String
     | NumLit Float
     | KeyLit Int
@@ -136,6 +137,11 @@ processList ctx loc name args =
             args
                 |> mapListResult (processExpr ctx)
                 |> Result.map (LocatedNode loc << ListLit)
+
+        "do" ->
+            args
+                |> mapListResult (processExpr ctx)
+                |> Result.map (LocatedNode loc << Do)
 
         _ ->
             case Dict.get name.node ctx.macros of
@@ -406,6 +412,11 @@ encodeExpr expr =
                 , ( "cond", encodeExpr cond )
                 , ( "body", encodeExpr body )
                 , ( "final", encodeMaybe encodeExpr final )
+                ]
+
+            Do body ->
+                [ ( "type", E.string "do" )
+                , ( "body", E.list encodeExpr body )
                 ]
 
             StrLit s ->
