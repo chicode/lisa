@@ -20,8 +20,10 @@ module Lisa exposing
     (var fib10 (fib 10))
     ```
 
-    @docs processProgram
-    @docs processProgramToJson
+    @docs parseProgram
+    @docs parseProgramToJson
+    @docs parseExpression
+    @docs parseExpressionToJson
 
 -}
 
