@@ -1,4 +1,9 @@
-module Lisa exposing (processString, processStringToJson)
+module Lisa exposing
+    ( parseExpression
+    , parseExpressionToJson
+    , parseProgram
+    , parseProgramToJson
+    )
 
 {-|
 
@@ -15,29 +20,44 @@ module Lisa exposing (processString, processStringToJson)
     (var fib10 (fib 10))
     ```
 
-    @docs processString
-    @docs processStringToJson
+    @docs processProgram
+    @docs processProgramToJson
 
 -}
 
-import Common exposing (Error)
+import Common exposing (Error, encodeResult, mapListResult)
 import Json.Encode as E
 import Lisa.Parser
-import Lisa.Process exposing (Context)
+import Lisa.Process exposing (Context, ExprNode, encodeExpr)
 
 
 {-| Parse a string into a program
 -}
-processString : String -> Context -> Result Error Lisa.Process.Program
-processString input ctx =
+parseProgram : String -> Context -> Result Error (List ExprNode)
+parseProgram input ctx =
     Lisa.Parser.parse input
         |> Result.andThen (Lisa.Process.processProgram ctx)
 
 
 {-| Parse a string into a Json representation of a program
 -}
-processStringToJson : String -> Context -> Result E.Value E.Value
-processStringToJson input ctx =
-    processString input ctx
-        |> Result.map Lisa.Process.encodeProgram
-        |> Result.mapError Common.encodeError
+parseProgramToJson : String -> Context -> E.Value
+parseProgramToJson input ctx =
+    parseProgram input ctx
+        |> encodeResult (E.list encodeExpr)
+
+
+{-| Parse a string into an expression
+-}
+parseExpression : String -> Context -> Result Error (List ExprNode)
+parseExpression input ctx =
+    Lisa.Parser.parse input
+        |> Result.andThen (mapListResult (Lisa.Process.processExpr ctx))
+
+
+{-| Parse a string into a Json representation of an expression
+-}
+parseExpressionToJson : String -> Context -> E.Value
+parseExpressionToJson input ctx =
+    parseExpression input ctx
+        |> encodeResult (E.list encodeExpr)

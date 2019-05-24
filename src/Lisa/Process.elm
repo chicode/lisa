@@ -3,8 +3,8 @@ module Lisa.Process exposing
     , Expr(..)
     , ExprNode
     , MacroHandler
-    , Program
-    , encodeProgram
+    , encodeExpr
+    , processExpr
     , processProgram
     )
 
@@ -33,6 +33,8 @@ type Expr
     | If IfExpr
     | Do (List ExprNode)
     | Func FuncDecl
+    | DefVar VarDecl SymbolNode (Maybe ExprNode)
+    | DefFunc SymbolNode FuncDecl
     | StrLit String
     | NumLit Float
     | KeyLit Int
@@ -65,12 +67,6 @@ type alias FuncDecl =
     }
 
 
-type alias Program =
-    { vars : Dict String ( VarDecl, ExprNode )
-    , funcs : Dict String FuncDecl
-    }
-
-
 type alias MacroHandler =
     (AstNode -> Result Error ExprNode)
     -> Location
@@ -83,16 +79,9 @@ type alias Context =
     }
 
 
-emptyProgram : Program
-emptyProgram =
-    { vars = Dict.empty
-    , funcs = Dict.empty
-    }
-
-
-processProgram : Context -> List AstNode -> Result Error Program
-processProgram ctx ast =
-    ast |> foldlListResult (processTopLevel ctx) emptyProgram
+processProgram : Context -> List AstNode -> Result Error (List ExprNode)
+processProgram ctx =
+    mapListResult (processTopLevel ctx)
 
 
 processExpr : Context -> AstNode -> Result Error ExprNode
@@ -125,14 +114,37 @@ processExpr ctx expr =
 
 processList : Context -> Location -> SymbolNode -> List AstNode -> Result Error ExprNode
 processList ctx loc name args =
+    let
+        processVarDecl varType =
+            processVar ctx loc name.node args
+                |> Result.map (\( var, init ) -> LocatedNode loc <| DefVar varType var init)
+    in
     case name.node of
+        "defunc" ->
+            processDefunc ctx loc args
+
+        "var" ->
+            processVarDecl Var
+
+        "const" ->
+            processVarDecl Const
+
         "if" ->
             processIf ctx loc args
 
         "set" ->
             processVar ctx loc "set" args
                 |> Result.andThen
-                    (\( var, expr ) -> Ok <| LocatedNode loc <| SetVar var expr)
+                    (\( var, maybeExpr ) ->
+                        case maybeExpr of
+                            Just expr ->
+                                Ok <| LocatedNode loc <| SetVar var expr
+
+                            Nothing ->
+                                Err <|
+                                    nonRecovError loc
+                                        "Missing what value to set the variable to"
+                    )
 
         "list" ->
             args
@@ -204,15 +216,28 @@ processVar :
     -> Location
     -> String
     -> List AstNode
-    -> Result Error ( SymbolNode, ExprNode )
+    -> Result Error ( SymbolNode, Maybe ExprNode )
 processVar ctx loc name args =
     case args of
-        var :: val :: [] ->
+        var :: rest ->
             case var.node of
                 Symbol sym ->
-                    processExpr ctx val
-                        |> Result.map
-                            (\expr -> ( mapNode var sym, expr ))
+                    case rest of
+                        [] ->
+                            Ok ( mapNode var sym, Nothing )
+
+                        val :: extra ->
+                            if List.isEmpty extra then
+                                processExpr ctx val
+                                    |> Result.map
+                                        (\expr -> ( mapNode var sym, Just expr ))
+
+                            else
+                                Err <|
+                                    nonRecovError loc <|
+                                        "Too many operands to '"
+                                            ++ name
+                                            ++ "'"
 
                 _ ->
                     Err <|
@@ -220,12 +245,6 @@ processVar ctx loc name args =
                             "First operand to '"
                                 ++ name
                                 ++ "' must be a symbol"
-
-        var :: val :: rest ->
-            Err <| nonRecovError loc <| "Too many operands to '" ++ name ++ "'"
-
-        var :: [] ->
-            Err <| nonRecovError loc "Missing what value to set the variable to"
 
         [] ->
             Err <| nonRecovError loc <| "Missing operands to '" ++ name ++ "'"
@@ -236,8 +255,8 @@ topLevelError =
     "Top level expression must be an var, const, or function declaration"
 
 
-processTopLevel : Context -> AstNode -> Program -> Result Error Program
-processTopLevel ctx expr program =
+processTopLevel : Context -> AstNode -> Result Error ExprNode
+processTopLevel ctx expr =
     case expr.node of
         List children ->
             case children of
@@ -247,7 +266,7 @@ processTopLevel ctx expr program =
                 func :: args ->
                     case func.node of
                         Symbol sym ->
-                            processTopLevelList ctx expr.loc (mapNode expr sym) args program
+                            processTopLevelList ctx expr.loc (mapNode expr sym) args
 
                         _ ->
                             Err <| nonRecovErrNode func topLevelError
@@ -271,8 +290,8 @@ processFunc ctx loc args =
                 (bodyNodes |> mapListResult (processExpr ctx))
 
 
-processDefunc : Context -> Location -> List AstNode -> Program -> Result Error Program
-processDefunc ctx loc args program =
+processDefunc : Context -> Location -> List AstNode -> Result Error ExprNode
+processDefunc ctx loc args =
     case args of
         [] ->
             Err <|
@@ -281,23 +300,8 @@ processDefunc ctx loc args program =
                         ++ "a list of parameters, and then the function body"
 
         nameNode :: rest ->
-            Result.map2
-                (\name func ->
-                    { program | funcs = program.funcs |> Dict.insert name func }
-                )
-                (processSymbol nameNode
-                    |> Result.andThen
-                        (\symbolNode ->
-                            if Dict.member symbolNode.node program.funcs then
-                                Err <|
-                                    nonRecovError
-                                        loc
-                                        "Cannot redefine previously defined function"
-
-                            else
-                                Ok symbolNode.node
-                        )
-                )
+            Result.map2 (\name func -> LocatedNode loc <| DefFunc name func)
+                (processSymbol nameNode)
                 (processFunc ctx loc rest)
 
 
@@ -316,60 +320,33 @@ processTopLevelList :
     -> Location
     -> SymbolNode
     -> List AstNode
-    -> Program
-    -> Result Error Program
-processTopLevelList ctx loc name args program =
+    -> Result Error ExprNode
+processTopLevelList ctx loc name args =
     let
-        processHandler body update =
-            case body of
-                Nothing ->
-                    args
-                        |> mapListResult (processExpr ctx)
-                        |> Result.map update
-
-                Just _ ->
-                    Err <|
-                        nonRecovError loc <|
-                            "Duplicate "
-                                ++ name.node
-                                ++ " declaration"
-
-        processVarDecl varType =
+        processVarDeclNoInit varType =
             processVar ctx loc name.node args
-                |> Result.map
-                    (\( var, expr ) ->
-                        { program | vars = Dict.insert var.node ( varType, expr ) program.vars }
+                |> Result.andThen
+                    (\( var, init ) ->
+                        case init of
+                            Nothing ->
+                                Ok <| LocatedNode loc <| DefVar varType var Nothing
+
+                            Just initExpr ->
+                                Err <| nonRecovErrNode initExpr ""
                     )
     in
     case name.node of
         "defunc" ->
-            processDefunc ctx loc args program
+            processDefunc ctx loc args
 
         "var" ->
-            processVarDecl Var
+            processVarDeclNoInit Var
 
         "const" ->
-            processVarDecl Const
+            processVarDeclNoInit Const
 
         _ ->
             Err <| nonRecovError loc topLevelError
-
-
-encodeProgram : Program -> E.Value
-encodeProgram program =
-    E.object
-        [ ( "vars"
-          , E.dict identity
-                (\( declType, init ) ->
-                    E.object
-                        [ ( "type", encodeVarDecl declType )
-                        , ( "init", encodeExpr init )
-                        ]
-                )
-                program.vars
-          )
-        , ( "funcs", E.dict identity encodeFuncDecl program.funcs )
-        ]
 
 
 encodeVarDecl : VarDecl -> E.Value
@@ -425,6 +402,18 @@ encodeExpr expr =
 
             Func func ->
                 [ ( "type", E.string "func" )
+                , ( "func", encodeFuncDecl func )
+                ]
+
+            DefVar varType var init ->
+                [ ( "type", E.string "defVar" )
+                , ( "varType", encodeVarDecl varType )
+                , ( "init", encodeMaybe encodeExpr init )
+                ]
+
+            DefFunc name func ->
+                [ ( "type", E.string "defFunc" )
+                , ( "name", encodeSymbol name )
                 , ( "func", encodeFuncDecl func )
                 ]
 

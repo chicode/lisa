@@ -5,7 +5,6 @@ module Lisa.Parser exposing
     , encodeExpr
     , errorToString
     , parse
-    , parseToJson
     )
 
 import Common
@@ -164,22 +163,6 @@ encodeSExpr sExpr =
             [ ( "type", E.string "num" )
             , ( "value", E.float num )
             ]
-
-
-parseToJson : String -> E.Value
-parseToJson input =
-    case parse input of
-        Ok parsed ->
-            E.object
-                [ ( "status", E.string "ok" )
-                , ( "parsed", E.list encodeExpr parsed )
-                ]
-
-        Err err ->
-            E.object
-                [ ( "status", E.string "err" )
-                , ( "error", encodeError err )
-                ]
 
 
 parse : String -> Result Error (List AstNode)

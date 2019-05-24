@@ -4,6 +4,7 @@ module Common exposing
     , Location
     , Recoverable(..)
     , encodeError
+    , encodeResult
     , encodeWithLocation
     , errNode
     , foldlListResult
@@ -75,6 +76,22 @@ encodeError { recoverable, loc, msg } =
           )
         , ( "msg", E.string msg )
         ]
+
+
+encodeResult : (a -> E.Value) -> Result Error a -> E.Value
+encodeResult func r =
+    case r of
+        Ok result ->
+            E.object
+                [ ( "status", E.string "ok" )
+                , ( "result", func result )
+                ]
+
+        Err err ->
+            E.object
+                [ ( "status", E.string "err" )
+                , ( "error", encodeError err )
+                ]
 
 
 mapNode : LocatedNode a -> b -> LocatedNode b

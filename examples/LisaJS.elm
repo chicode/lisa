@@ -32,15 +32,8 @@ update msg () =
         Request s ->
             ( ()
             , out <|
-                case
-                    Lisa.processStringToJson s
-                        { macros = Dict.fromList [ ( "key", Keys.keyMacro ) ] }
-                of
-                    Ok parsed ->
-                        parsed
-
-                    Err err ->
-                        err
+                Lisa.parseExpressionToJson s
+                    { macros = Dict.fromList [ ( "key", Keys.keyMacro ) ] }
             )
 
 

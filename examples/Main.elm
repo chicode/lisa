@@ -1,6 +1,7 @@
 module Main exposing (main)
 
 import Browser
+import Dict
 import Html exposing (Html, div, text, textarea)
 import Html.Attributes exposing (style, value)
 import Html.Events exposing (onInput)
@@ -28,14 +29,12 @@ view input =
             ]
             []
         , monodiv <|
-            case Lisa.processString input of
+            case Lisa.parseExpression input { macros = Dict.empty } of
                 Ok result ->
-                    result |> Lisa.Process.encodeProgram |> E.encode 2
+                    result |> E.list Lisa.Process.encodeExpr |> E.encode 2
 
                 Err err ->
                     err.msg
-
-        -- , monodiv <| E.encode 2 <| Lisa.Parser.parseToJson input
         ]
 
 
