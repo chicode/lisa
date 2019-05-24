@@ -408,6 +408,7 @@ encodeExpr expr =
             DefVar varType var init ->
                 [ ( "type", E.string "defVar" )
                 , ( "varType", encodeVarDecl varType )
+                , ( "var", encodeSymbol var )
                 , ( "init", encodeMaybe encodeExpr init )
                 ]
 
