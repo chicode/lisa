@@ -5,12 +5,18 @@
 ## Example
 
 ```lisp
-(def fib (n)
-    (if (<= n 2) 1
-        (+
-            (fib (- n 1))
-            (fib (- n 2)))))
-(var fib10 (fib 10))
+(defunc fib (n)
+    (var a 0) (var b 1) (var f 1)
+    (defunc calc-fib (i)
+        (if (<= i n)
+            (do
+                (set f (+ a b))
+                (set a b)
+                (set b f)
+                (calc-fib (+ i 1)))
+            f))
+    (calc-fib 2))
+(= (fib 10) 55)
 ```
 
 ## Running examples
