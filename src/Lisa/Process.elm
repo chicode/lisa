@@ -32,6 +32,7 @@ type Expr
     | FuncCall SymbolNode (List ExprNode)
     | If IfExpr
     | Do (List ExprNode)
+    | While ExprNode (List ExprNode)
     | Func FuncDecl
     | DefVar VarDecl SymbolNode (Maybe ExprNode)
     | DefFunc SymbolNode FuncDecl
@@ -131,6 +132,16 @@ processList ctx loc name args =
 
         "if" ->
             processIf ctx loc args
+
+        "while" ->
+            case args of
+                condNode :: bodyNodes ->
+                    Result.map2 (\cond body -> LocatedNode loc <| While cond body)
+                        (processExpr ctx condNode)
+                        (mapListResult (processExpr ctx) bodyNodes)
+
+                [] ->
+                    Err <| nonRecovError loc "Missing condition to 'while'"
 
         "set" ->
             processVar ctx loc "set" args
@@ -397,6 +408,12 @@ encodeExpr expr =
 
             Do body ->
                 [ ( "type", E.string "do" )
+                , ( "body", E.list encodeExpr body )
+                ]
+
+            While cond body ->
+                [ ( "type", E.string "while" )
+                , ( "cond", encodeExpr cond )
                 , ( "body", E.list encodeExpr body )
                 ]
 
