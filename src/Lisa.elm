@@ -42,8 +42,8 @@ module Lisa exposing
 
 -}
 
-import Common exposing (Error, encodeResult, mapListResult)
 import Json.Encode as E
+import Lisa.Common exposing (Error, encodeResult, mapListResult)
 import Lisa.Parser
 import Lisa.Process exposing (Context, ExprNode, encodeExpr)
 

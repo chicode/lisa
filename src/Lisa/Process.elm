@@ -8,7 +8,21 @@ module Lisa.Process exposing
     , processProgram
     )
 
-import Common
+{-|
+
+@docs Context
+@docs Expr
+@docs ExprNode
+@docs MacroHandler
+@docs encodeExpr
+@docs processExpr
+@docs processProgram
+
+-}
+
+import Dict exposing (Dict)
+import Json.Encode as E
+import Lisa.Common
     exposing
         ( Error
         , LocatedNode
@@ -20,12 +34,11 @@ import Common
         , nonRecovErrNode
         , nonRecovError
         )
-import Dict exposing (Dict)
-import Json.Encode as E
 import Lisa.Parser exposing (AstNode, SExpr(..))
 import Tuple
 
 
+{-| -}
 type Expr
     = SetVar SymbolNode ExprNode
     | GetVar String
@@ -49,6 +62,7 @@ type alias IfExpr =
     }
 
 
+{-| -}
 type alias ExprNode =
     LocatedNode Expr
 
@@ -68,23 +82,40 @@ type alias FuncDecl =
     }
 
 
+{-| -}
 type alias MacroHandler =
-    (AstNode -> Result Error ExprNode)
+    Context
     -> Location
     -> List AstNode
     -> Result Error ExprNode
 
 
-type alias Context =
+type alias InputContext =
     { macros : Dict String MacroHandler
     }
 
 
+{-|
+
+    This is sort of strange in order to fix a problem with recursive type aliases.
+
+-}
+type Context
+    = Context InputContext
+
+
+getCtx : Context -> InputContext
+getCtx (Context ctx) =
+    ctx
+
+
+{-| -}
 processProgram : Context -> List AstNode -> Result Error (List ExprNode)
 processProgram ctx =
     mapListResult (processTopLevel ctx)
 
 
+{-| -}
 processExpr : Context -> AstNode -> Result Error ExprNode
 processExpr ctx expr =
     case expr.node of
@@ -171,9 +202,9 @@ processList ctx loc name args =
             processFunc ctx loc args |> Result.map (LocatedNode loc << Func)
 
         _ ->
-            case Dict.get name.node ctx.macros of
+            case Dict.get name.node (getCtx ctx).macros of
                 Just macro ->
-                    macro (processExpr ctx) loc args
+                    macro ctx loc args
 
                 Nothing ->
                     args
@@ -378,6 +409,7 @@ encodeFuncDecl { params, body } =
         ]
 
 
+{-| -}
 encodeExpr : ExprNode -> E.Value
 encodeExpr expr =
     encodeWithLocation expr.loc <|

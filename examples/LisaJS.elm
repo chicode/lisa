@@ -2,7 +2,6 @@ port module LisaJS exposing (main)
 
 import Dict
 import Json.Encode as E
-import Keys
 import Lisa
 
 
@@ -33,7 +32,7 @@ update msg () =
             ( ()
             , out <|
                 Lisa.parseExpressionToJson s
-                    { macros = Dict.fromList [ ( "key", Keys.keyMacro ) ] }
+                    { macros = Dict.empty }
             )
 
 

@@ -1,13 +1,18 @@
 module Lisa.Parser exposing
     ( AstNode
-    , ParserError
     , SExpr(..)
-    , encodeExpr
-    , errorToString
     , parse
     )
 
-import Common
+{-|
+
+@docs AstNode
+@docs SExpr
+@docs parse
+
+-}
+
+import Lisa.Common
     exposing
         ( Error
         , LocatedNode
@@ -16,7 +21,6 @@ import Common
         , encodeError
         , encodeWithLocation
         )
-import Json.Encode as E
 import Maybe
 import Parser.Advanced as Parser exposing (..)
 import Set exposing (Set)
@@ -45,6 +49,7 @@ type alias ParserError =
     DeadEnd Context Problem
 
 
+{-| -}
 type SExpr
     = List (List AstNode)
     | Symbol String
@@ -52,6 +57,7 @@ type SExpr
     | Num Float
 
 
+{-| -}
 type alias AstNode =
     LocatedNode SExpr
 
@@ -122,49 +128,7 @@ errorToString err =
             "You should never see this error message"
 
 
-encodeContext : Context -> E.Value
-encodeContext context =
-    E.string <|
-        case context of
-            StrLit ->
-                "str"
-
-            ListLit ->
-                "list"
-
-            TopCtx ->
-                "top"
-
-
-encodeExpr : AstNode -> E.Value
-encodeExpr { loc, node } =
-    encodeWithLocation loc <| encodeSExpr node
-
-
-encodeSExpr : SExpr -> List ( String, E.Value )
-encodeSExpr sExpr =
-    case sExpr of
-        List l ->
-            [ ( "type", E.string "list" )
-            , ( "children", E.list encodeExpr l )
-            ]
-
-        Symbol sym ->
-            [ ( "type", E.string "symbol" )
-            , ( "ident", E.string sym )
-            ]
-
-        Str str ->
-            [ ( "type", E.string "str" )
-            , ( "value", E.string str )
-            ]
-
-        Num num ->
-            [ ( "type", E.string "num" )
-            , ( "value", E.float num )
-            ]
-
-
+{-| -}
 parse : String -> Result Error (List AstNode)
 parse input =
     Parser.run parser input
