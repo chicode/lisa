@@ -45,36 +45,36 @@ module Lisa exposing
 import Json.Encode as E
 import Lisa.Common exposing (Error, encodeResult, mapListResult)
 import Lisa.Parser
-import Lisa.Process exposing (Context, ExprNode, encodeExpr)
+import Lisa.Process exposing (ExprNode, encodeExpr)
 
 
 {-| Parse a string into a program
 -}
-parseProgram : String -> Context -> Result Error (List ExprNode)
-parseProgram input ctx =
+parseProgram : String -> Lisa.Process.Options -> Result Error (List ExprNode)
+parseProgram input opts =
     Lisa.Parser.parse input
-        |> Result.andThen (Lisa.Process.processProgram ctx)
+        |> Result.andThen (Lisa.Process.processProgram opts)
 
 
 {-| Parse a string into a Json representation of a program
 -}
-parseProgramToJson : String -> Context -> E.Value
-parseProgramToJson input ctx =
-    parseProgram input ctx
+parseProgramToJson : String -> Lisa.Process.Options -> E.Value
+parseProgramToJson input opts =
+    parseProgram input opts
         |> encodeResult (E.list encodeExpr)
 
 
 {-| Parse a string into an expression
 -}
-parseExpression : String -> Context -> Result Error (List ExprNode)
-parseExpression input ctx =
+parseExpression : String -> Lisa.Process.Options -> Result Error (List ExprNode)
+parseExpression input opts =
     Lisa.Parser.parse input
-        |> Result.andThen (mapListResult (Lisa.Process.processExpr ctx))
+        |> Result.andThen (mapListResult (Lisa.Process.processExprOpts opts))
 
 
 {-| Parse a string into a Json representation of an expression
 -}
-parseExpressionToJson : String -> Context -> E.Value
-parseExpressionToJson input ctx =
-    parseExpression input ctx
+parseExpressionToJson : String -> Lisa.Process.Options -> E.Value
+parseExpressionToJson input opts =
+    parseExpression input opts
         |> encodeResult (E.list encodeExpr)

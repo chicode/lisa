@@ -5,7 +5,9 @@ module Lisa.Process exposing
     , MacroHandler
     , encodeExpr
     , processExpr
+    , processExprOpts
     , processProgram
+    , Options
     )
 
 {-|
@@ -16,7 +18,9 @@ module Lisa.Process exposing
 @docs MacroHandler
 @docs encodeExpr
 @docs processExpr
+@docs processExprOpts
 @docs processProgram
+@docs Options
 
 -}
 
@@ -90,7 +94,8 @@ type alias MacroHandler =
     -> Result Error ExprNode
 
 
-type alias InputContext =
+{-| -}
+type alias Options =
     { macros : Dict String MacroHandler
     }
 
@@ -101,18 +106,24 @@ type alias InputContext =
 
 -}
 type Context
-    = Context InputContext
+    = Context Options
 
 
-getCtx : Context -> InputContext
+getCtx : Context -> Options
 getCtx (Context ctx) =
     ctx
 
 
 {-| -}
-processProgram : Context -> List AstNode -> Result Error (List ExprNode)
-processProgram ctx =
-    mapListResult (processTopLevel ctx)
+processProgram : Options -> List AstNode -> Result Error (List ExprNode)
+processProgram opts =
+    mapListResult (processTopLevel (Context opts))
+
+
+{-| -}
+processExprOpts : Options -> AstNode -> Result Error ExprNode
+processExprOpts opts =
+    processExpr (Context opts)
 
 
 {-| -}
