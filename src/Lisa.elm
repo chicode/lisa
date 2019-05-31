@@ -3,6 +3,8 @@ module Lisa exposing
     , parseExpressionToJson
     , parseProgram
     , parseProgramToJson
+    , parseReplExpression
+    , parseReplExpressionToJson
     )
 
 {-|
@@ -39,6 +41,8 @@ module Lisa exposing
     @docs parseProgramToJson
     @docs parseExpression
     @docs parseExpressionToJson
+    @docs parseReplExpression
+    @docs parseReplExpressionToJson
 
 -}
 
