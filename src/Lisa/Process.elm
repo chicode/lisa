@@ -60,8 +60,10 @@ type Expr
     | Cond CondExpr
     | Func FuncDecl
     | Let (List ( String, ExprNode )) ExprNode
-    | StrLit String
+    | NoneLit
+    | BoolLit Bool
     | NumLit Float
+    | StrLit String
     | ListLit (List ExprNode)
 
 
@@ -197,10 +199,21 @@ processExpr ctx expr =
             Ok <| mapNode expr <| NumLit n
 
         Symbol sym ->
-            sym
-                |> mapNode expr
-                |> validSymbol
-                |> Result.map (mapNode expr << GetSymbol << .node)
+            case sym of
+                "none" ->
+                    Ok <| mapNode expr NoneLit
+
+                "true" ->
+                    Ok <| mapNode expr <| BoolLit True
+
+                "false" ->
+                    Ok <| mapNode expr <| BoolLit False
+
+                _ ->
+                    sym
+                        |> mapNode expr
+                        |> validSymbol
+                        |> Result.map (mapNode expr << GetSymbol << .node)
 
         List list ->
             list
@@ -460,7 +473,18 @@ processTuple errMsg mapFirst mapSecond node =
 
 invalidIdents : Set String
 invalidIdents =
-    Set.fromList [ "defconst", "defunc", "if", "let", "func", "cond", "else" ]
+    Set.fromList
+        [ "defconst"
+        , "defunc"
+        , "if"
+        , "let"
+        , "func"
+        , "cond"
+        , "else"
+        , "none"
+        , "true"
+        , "false"
+        ]
 
 
 isValidIdent : String -> Bool
@@ -533,14 +557,22 @@ encodeExpr expr =
                 , ( "body", encodeExpr body )
                 ]
 
-            StrLit s ->
-                [ ( "type", E.string "strLit" )
-                , ( "value", E.string s )
+            NoneLit ->
+                [ ( "type", E.string "noneLit" ) ]
+
+            BoolLit b ->
+                [ ( "type", E.string "boolLit" )
+                , ( "value", E.bool b )
                 ]
 
             NumLit n ->
                 [ ( "type", E.string "numLit" )
                 , ( "value", E.float n )
+                ]
+
+            StrLit s ->
+                [ ( "type", E.string "strLit" )
+                , ( "value", E.string s )
                 ]
 
             ListLit list ->
