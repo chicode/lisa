@@ -302,6 +302,9 @@ processFunc ctx loc args =
                 nonRecovError loc
                     "Missing the argument list for defining this function"
 
+        _ :: [] ->
+            Err <| nonRecovError loc "Missing the body to this function"
+
         params :: body :: [] ->
             Result.map2 FuncDecl
                 (params
