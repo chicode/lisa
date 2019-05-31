@@ -3,7 +3,7 @@
     "name": "chicode/lisa",
     "summary": "A Lisp dialect with a parser and compiler to JS",
     "license": "MIT",
-    "version": "5.1.1",
+    "version": "5.1.2",
     "exposed-modules": [
         "Lisa",
         "Lisa.Parser",
