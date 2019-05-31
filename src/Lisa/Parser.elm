@@ -175,12 +175,12 @@ expr =
         |= getPosition
         |= oneOf
             [ map Symbol symbol
+            , map FieldName fieldName
             , map Num float
             , map Str string
             , map Group group
             , map List list
             , map Record record
-            , map FieldName fieldName
             ]
         |= getPosition
 
