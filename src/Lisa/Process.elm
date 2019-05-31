@@ -8,6 +8,10 @@ module Lisa.Process exposing
     , processExprOpts
     , processProgram
     , Options
+    , Program
+    , ReplExpression(..)
+    , encodeReplExpression
+    , processReplExpr
     )
 
 {-|
@@ -21,6 +25,10 @@ module Lisa.Process exposing
 @docs processExprOpts
 @docs processProgram
 @docs Options
+@docs Program
+@docs ReplExpression
+@docs encodeReplExpression
+@docs processReplExpr
 
 -}
 
@@ -33,36 +41,33 @@ import Lisa.Common
         , Location
         , encodeWithLocation
         , foldlListResult
+        , groupListEvery2
         , mapListResult
         , mapNode
         , nonRecovErrNode
         , nonRecovError
         )
 import Lisa.Parser exposing (AstNode, SExpr(..))
+import List.Extra
+import Set exposing (Set)
 import Tuple
 
 
 {-| -}
 type Expr
-    = SetVar SymbolNode ExprNode
-    | GetVar String
+    = GetSymbol String
     | FuncCall SymbolNode (List ExprNode)
-    | If IfExpr
-    | Do (List ExprNode)
-    | While ExprNode (List ExprNode)
+    | Cond CondExpr
     | Func FuncDecl
-    | DefVar VarDecl SymbolNode (Maybe ExprNode)
-    | DefFunc SymbolNode FuncDecl
+    | Let (List ( String, ExprNode )) ExprNode
     | StrLit String
     | NumLit Float
-    | KeyLit Int
     | ListLit (List ExprNode)
 
 
-type alias IfExpr =
-    { cond : ExprNode
-    , body : ExprNode
-    , final : Maybe ExprNode
+type alias CondExpr =
+    { clauses : List ( ExprNode, ExprNode )
+    , otherwise : ExprNode
     }
 
 
@@ -82,7 +87,7 @@ type VarDecl
 
 type alias FuncDecl =
     { params : List String
-    , body : List ExprNode
+    , body : ExprNode
     }
 
 
@@ -100,6 +105,11 @@ type alias Options =
     }
 
 
+{-| -}
+type alias Program =
+    Dict String ExprNode
+
+
 {-|
 
     This is sort of strange in order to fix a problem with recursive type aliases.
@@ -115,9 +125,59 @@ getCtx (Context ctx) =
 
 
 {-| -}
-processProgram : Options -> List AstNode -> Result Error (List ExprNode)
+processProgram : Options -> List AstNode -> Result Error Program
 processProgram opts =
-    mapListResult (processTopLevel (Context opts))
+    let
+        ctx =
+            Context opts
+    in
+    foldlListResult
+        (\expr program ->
+            expr
+                |> processTopLevel ctx
+                |> Maybe.withDefault
+                    (Err <|
+                        nonRecovErrNode expr <|
+                            "Top level of a program can only be a (defunc) or "
+                                ++ "(defconst) declaration"
+                    )
+                |> Result.andThen
+                    (\( name, val ) ->
+                        if program |> Dict.member name.node then
+                            Err <|
+                                nonRecovErrNode name <|
+                                    "You cannot redefine '"
+                                        ++ name.node
+                                        ++ "'"
+
+                        else
+                            program |> Dict.insert name.node val |> Ok
+                    )
+        )
+        Dict.empty
+
+
+{-| -}
+type ReplExpression
+    = Expression ExprNode
+    | Definition String ExprNode
+
+
+{-| -}
+processReplExpr : Options -> AstNode -> Result Error ReplExpression
+processReplExpr opts expr =
+    let
+        ctx =
+            Context opts
+    in
+    case processTopLevel ctx expr of
+        Just result ->
+            result
+                |> Result.map
+                    (\( name, value ) -> Definition name.node value)
+
+        Nothing ->
+            processExpr ctx expr |> Result.map Expression
 
 
 {-| -}
@@ -137,80 +197,43 @@ processExpr ctx expr =
             Ok <| mapNode expr <| NumLit n
 
         Symbol sym ->
-            Ok <| mapNode expr <| GetVar sym
+            sym
+                |> mapNode expr
+                |> validSymbol
+                |> Result.map (mapNode expr << GetSymbol << .node)
 
         List list ->
-            case list of
+            list
+                |> mapListResult (processExpr ctx)
+                |> Result.map (mapNode expr << ListLit)
+
+        Group group ->
+            case group of
                 [] ->
                     Err <| nonRecovErrNode expr <| ""
 
                 name :: args ->
                     case name.node of
                         Symbol sym ->
-                            processList ctx expr.loc (mapNode name sym) args
+                            processGroup ctx expr.loc (mapNode name sym) args
 
                         _ ->
                             Err <|
                                 nonRecovErrNode name <|
-                                    "First argument to a list must be a symbol"
+                                    "First element in a group must be a symbol"
 
 
-processList : Context -> Location -> SymbolNode -> List AstNode -> Result Error ExprNode
-processList ctx loc name args =
-    let
-        processVarDecl varType =
-            processVar ctx loc name.node args
-                |> Result.map (\( var, init ) -> LocatedNode loc <| DefVar varType var init)
-    in
+processGroup : Context -> Location -> SymbolNode -> List AstNode -> Result Error ExprNode
+processGroup ctx loc name args =
     case name.node of
-        "defunc" ->
-            processDefunc ctx loc args
-
-        "var" ->
-            processVarDecl Var
-
-        "const" ->
-            processVarDecl Const
-
-        "if" ->
-            processIf ctx loc args
-
-        "while" ->
-            case args of
-                condNode :: bodyNodes ->
-                    Result.map2 (\cond body -> LocatedNode loc <| While cond body)
-                        (processExpr ctx condNode)
-                        (mapListResult (processExpr ctx) bodyNodes)
-
-                [] ->
-                    Err <| nonRecovError loc "Missing condition to 'while'"
-
-        "set" ->
-            processVar ctx loc "set" args
-                |> Result.andThen
-                    (\( var, maybeExpr ) ->
-                        case maybeExpr of
-                            Just expr ->
-                                Ok <| LocatedNode loc <| SetVar var expr
-
-                            Nothing ->
-                                Err <|
-                                    nonRecovError loc
-                                        "Missing what value to set the variable to"
-                    )
-
-        "list" ->
-            args
-                |> mapListResult (processExpr ctx)
-                |> Result.map (LocatedNode loc << ListLit)
-
-        "do" ->
-            args
-                |> mapListResult (processExpr ctx)
-                |> Result.map (LocatedNode loc << Do)
+        "cond" ->
+            processCond ctx loc args
 
         "func" ->
-            processFunc ctx loc args |> Result.map (LocatedNode loc << Func)
+            processFunc ctx loc args
+
+        "let" ->
+            processLet ctx loc args
 
         _ ->
             case Dict.get name.node (getCtx ctx).macros of
@@ -218,132 +241,141 @@ processList ctx loc name args =
                     macro ctx loc args
 
                 Nothing ->
-                    args
-                        |> mapListResult (processExpr ctx)
-                        |> Result.map (LocatedNode loc << FuncCall name)
+                    Result.map2 FuncCall
+                        (validSymbol name)
+                        (args |> mapListResult (processExpr ctx))
+                        |> Result.map (LocatedNode loc)
 
 
-processIf : Context -> Location -> List AstNode -> Result Error ExprNode
-processIf ctx loc args =
-    let
-        err =
-            nonRecovError loc <|
-                "Expected 2 or 3 operands to 'if', got "
-                    ++ (List.length args |> String.fromInt)
-    in
-    case args of
-        condNode :: bodyNode :: rest ->
-            Result.map3
-                (\cond body final ->
-                    LocatedNode loc <| If <| IfExpr cond body final
-                )
-                (processExpr ctx condNode)
-                (processExpr ctx bodyNode)
-                (case rest of
-                    [] ->
-                        Ok Nothing
-
-                    finalNode :: [] ->
-                        processExpr ctx finalNode |> Result.map Just
-
-                    _ ->
-                        Err err
-                )
-
-        _ ->
-            Err err
-
-
-processListLit : String -> AstNode -> Result Error (List AstNode)
-processListLit msg node =
-    case node.node of
-        List list ->
-            Ok list
-
-        _ ->
-            Err <| nonRecovErrNode node msg
-
-
-processVar :
-    Context
-    -> Location
-    -> String
-    -> List AstNode
-    -> Result Error ( SymbolNode, Maybe ExprNode )
-processVar ctx loc name args =
-    case args of
-        var :: rest ->
-            case var.node of
-                Symbol sym ->
-                    case rest of
-                        [] ->
-                            Ok ( mapNode var sym, Nothing )
-
-                        val :: extra ->
-                            if List.isEmpty extra then
-                                processExpr ctx val
-                                    |> Result.map
-                                        (\expr -> ( mapNode var sym, Just expr ))
-
-                            else
-                                Err <|
-                                    nonRecovError loc <|
-                                        "Too many operands to '"
-                                            ++ name
-                                            ++ "'"
-
-                _ ->
-                    Err <|
-                        nonRecovErrNode var <|
-                            "First operand to '"
-                                ++ name
-                                ++ "' must be a symbol"
-
-        [] ->
-            Err <| nonRecovError loc <| "Missing operands to '" ++ name ++ "'"
-
-
-topLevelError : String
-topLevelError =
-    "Top level expression must be an var, const, or function declaration"
-
-
-processTopLevel : Context -> AstNode -> Result Error ExprNode
-processTopLevel ctx expr =
-    case expr.node of
-        List children ->
-            case children of
-                [] ->
-                    Err <| nonRecovErrNode expr "Top level list cannot be empty"
-
-                func :: args ->
-                    case func.node of
-                        Symbol sym ->
-                            processTopLevelList ctx expr.loc (mapNode expr sym) args
-
-                        _ ->
-                            Err <| nonRecovErrNode func topLevelError
-
-        _ ->
-            Err <| nonRecovErrNode expr topLevelError
-
-
-processFunc : Context -> Location -> List AstNode -> Result Error FuncDecl
+processFunc : MacroHandler
 processFunc ctx loc args =
     case args of
         [] ->
-            Err <| nonRecovError loc "Missing the argument list to function"
+            Err <|
+                nonRecovError loc
+                    "Missing the argument list for defining this function"
 
-        paramsNode :: bodyNodes ->
+        params :: body :: [] ->
             Result.map2 FuncDecl
-                (paramsNode
-                    |> processListLit "Expected a list for the parameters list"
+                (params
+                    |> processGrouping "Expected a list for the parameters list"
                     |> Result.andThen (mapListResult (processSymbol >> Result.map .node))
                 )
-                (bodyNodes |> mapListResult (processExpr ctx))
+                (processExpr ctx body)
+                |> Result.map (LocatedNode loc << Func)
+
+        _ ->
+            Err <|
+                nonRecovError loc <|
+                    "Too many arguments to define this function; the body of a "
+                        ++ "function should be one expression, if you need to "
+                        ++ "do a lot of stuff in one function, try a (let ...) expression."
 
 
-processDefunc : Context -> Location -> List AstNode -> Result Error ExprNode
+processLet : MacroHandler
+processLet ctx loc args =
+    let
+        formErr =
+            "let should be in the form of (let [symbolone exprone "
+                ++ "symboltwo exprtwo symboln exprn] bodyexpr)"
+    in
+    case args of
+        defsNode :: bodyNode :: [] ->
+            Result.map2 Let
+                (defsNode
+                    |> processListGroup formErr
+                    |> Result.andThen
+                        (groupListEvery2
+                            >> Result.mapError
+                                (\odd -> nonRecovErrNode odd formErr)
+                        )
+                    |> Result.andThen
+                        (mapListResult
+                            (\( name, val ) ->
+                                Result.map2 Tuple.pair
+                                    (processSymbol name |> Result.map .node)
+                                    (processExpr ctx val)
+                            )
+                        )
+                )
+                (processExpr ctx bodyNode)
+                |> Result.map (LocatedNode loc)
+
+        _ ->
+            Err <| nonRecovError loc formErr
+
+
+processCond : MacroHandler
+processCond ctx loc args =
+    let
+        formErr =
+            "cond should be in the form of (cond [conditionOne expressionOne] "
+                ++ "[conditionTwo expressionTwo] [conditionN expressionN] "
+                ++ "[else otherwise])"
+    in
+    case List.Extra.unconsLast args of
+        Just ( otherwise, clauses ) ->
+            Result.map2 CondExpr
+                (mapListResult
+                    (processTuple formErr (processExpr ctx) (processExpr ctx))
+                    clauses
+                )
+                (otherwise
+                    |> processTuple formErr
+                        (\{ node } ->
+                            if node == Symbol "else" then
+                                Ok ()
+
+                            else
+                                Err <|
+                                    nonRecovError loc
+                                        "Missing [else ] condition in case expression"
+                        )
+                        (processExpr ctx)
+                    |> Result.map Tuple.second
+                )
+                |> Result.map (LocatedNode loc << Cond)
+
+        Nothing ->
+            Err <| nonRecovError loc formErr
+
+
+processTopLevel :
+    Context
+    -> AstNode
+    -> Maybe (Result Error ( SymbolNode, ExprNode ))
+processTopLevel ctx expr =
+    let
+        processTopLevelGroup sym args =
+            case sym of
+                "defunc" ->
+                    Just <| processDefunc ctx expr.loc args
+
+                "defconst" ->
+                    Just <| processDefconst ctx expr.loc args
+
+                _ ->
+                    Nothing
+    in
+    case expr.node of
+        Group children ->
+            case children of
+                func :: args ->
+                    case func.node of
+                        Symbol sym ->
+                            processTopLevelGroup sym args
+
+                        _ ->
+                            Nothing
+
+                _ ->
+                    Nothing
+
+        _ ->
+            Nothing
+
+
+processDefunc : Context -> Location -> List AstNode -> Result Error ( SymbolNode, ExprNode )
 processDefunc ctx loc args =
     case args of
         [] ->
@@ -353,71 +385,100 @@ processDefunc ctx loc args =
                         ++ "a list of parameters, and then the function body"
 
         nameNode :: rest ->
-            Result.map2 (\name func -> LocatedNode loc <| DefFunc name func)
+            Result.map2 Tuple.pair
                 (processSymbol nameNode)
                 (processFunc ctx loc rest)
+
+
+processDefconst :
+    Context
+    -> Location
+    -> List AstNode
+    -> Result Error ( SymbolNode, ExprNode )
+processDefconst ctx loc args =
+    case args of
+        nameNode :: bodyNode :: [] ->
+            Result.map2 Tuple.pair
+                (processSymbol nameNode)
+                (processExpr ctx bodyNode)
+
+        _ ->
+            Err <| nonRecovError loc "defconst must be of form (defconst constname expr)"
+
+
+processGrouping : String -> AstNode -> Result Error (List AstNode)
+processGrouping msg node =
+    case node.node of
+        Group group ->
+            Ok group
+
+        _ ->
+            Err <| nonRecovErrNode node msg
+
+
+processListGroup : String -> AstNode -> Result Error (List AstNode)
+processListGroup msg node =
+    case node.node of
+        List list ->
+            Ok list
+
+        _ ->
+            Err <| nonRecovErrNode node msg
 
 
 processSymbol : AstNode -> Result Error SymbolNode
 processSymbol node =
     case node.node of
         Symbol s ->
-            Ok <| mapNode node s
+            s |> mapNode node |> validSymbol
 
         _ ->
             Err <| nonRecovErrNode node "Expected a symbol"
 
 
-processTopLevelList :
-    Context
-    -> Location
-    -> SymbolNode
-    -> List AstNode
-    -> Result Error ExprNode
-processTopLevelList ctx loc name args =
-    let
-        processVarDeclNoInit varType =
-            processVar ctx loc name.node args
-                |> Result.andThen
-                    (\( var, init ) ->
-                        case init of
-                            Nothing ->
-                                Ok <| LocatedNode loc <| DefVar varType var Nothing
+processTuple :
+    String
+    -> (AstNode -> Result Error a)
+    -> (AstNode -> Result Error b)
+    -> AstNode
+    -> Result Error ( a, b )
+processTuple errMsg mapFirst mapSecond node =
+    node
+        |> processListGroup errMsg
+        |> Result.andThen
+            (\list ->
+                case list of
+                    first :: second :: [] ->
+                        Result.map2 Tuple.pair
+                            (mapFirst first)
+                            (mapSecond second)
 
-                            Just initExpr ->
-                                Err <| nonRecovErrNode initExpr ""
-                    )
-    in
-    case name.node of
-        "defunc" ->
-            processDefunc ctx loc args
-
-        "var" ->
-            processVarDeclNoInit Var
-
-        "const" ->
-            processVarDeclNoInit Const
-
-        _ ->
-            Err <| nonRecovError loc topLevelError
+                    _ ->
+                        Err <| nonRecovErrNode node errMsg
+            )
 
 
-encodeVarDecl : VarDecl -> E.Value
-encodeVarDecl varDecl =
-    case varDecl of
-        Var ->
-            E.string "var"
-
-        Const ->
-            E.string "const"
+invalidIdents : Set String
+invalidIdents =
+    Set.fromList [ "defconst", "defunc", "if", "let", "func", "cond", "else" ]
 
 
-encodeFuncDecl : FuncDecl -> E.Value
-encodeFuncDecl { params, body } =
-    E.object
-        [ ( "params", E.list E.string params )
-        , ( "body", E.list encodeExpr body )
-        ]
+isValidIdent : String -> Bool
+isValidIdent sym =
+    invalidIdents |> Set.member sym |> not
+
+
+validSymbol : SymbolNode -> Result Error SymbolNode
+validSymbol sym =
+    if isValidIdent sym.node then
+        Ok sym
+
+    else
+        Err <|
+            nonRecovErrNode sym <|
+                "Invalid identifier, try using something other than '"
+                    ++ sym.node
+                    ++ "'"
 
 
 {-| -}
@@ -425,15 +486,9 @@ encodeExpr : ExprNode -> E.Value
 encodeExpr expr =
     encodeWithLocation expr.loc <|
         case expr.node of
-            SetVar var val ->
-                [ ( "type", E.string "setVar" )
-                , ( "var", encodeSymbol var )
-                , ( "val", encodeExpr val )
-                ]
-
-            GetVar var ->
-                [ ( "type", E.string "getVar" )
-                , ( "var", encodeSymbol <| mapNode expr var )
+            GetSymbol sym ->
+                [ ( "type", E.string "getSymbol" )
+                , ( "symbol", encodeSymbol <| mapNode expr sym )
                 ]
 
             FuncCall func args ->
@@ -442,40 +497,40 @@ encodeExpr expr =
                 , ( "args", E.list encodeExpr args )
                 ]
 
-            If { cond, body, final } ->
+            Cond { clauses, otherwise } ->
                 [ ( "type", E.string "if" )
-                , ( "cond", encodeExpr cond )
-                , ( "body", encodeExpr body )
-                , ( "final", encodeMaybe encodeExpr final )
+                , ( "clauses"
+                  , E.list
+                        (\( cond, val ) ->
+                            E.object
+                                [ ( "cond", encodeExpr cond )
+                                , ( "val", encodeExpr val )
+                                ]
+                        )
+                        clauses
+                  )
+                , ( "otherwise", encodeExpr otherwise )
                 ]
 
-            Do body ->
-                [ ( "type", E.string "do" )
-                , ( "body", E.list encodeExpr body )
-                ]
-
-            While cond body ->
-                [ ( "type", E.string "while" )
-                , ( "cond", encodeExpr cond )
-                , ( "body", E.list encodeExpr body )
-                ]
-
-            Func func ->
+            Func { params, body } ->
                 [ ( "type", E.string "func" )
-                , ( "func", encodeFuncDecl func )
+                , ( "params", E.list E.string params )
+                , ( "body", encodeExpr body )
                 ]
 
-            DefVar varType var init ->
-                [ ( "type", E.string "defVar" )
-                , ( "varType", encodeVarDecl varType )
-                , ( "var", encodeSymbol var )
-                , ( "init", encodeMaybe encodeExpr init )
-                ]
-
-            DefFunc name func ->
-                [ ( "type", E.string "defFunc" )
-                , ( "name", encodeSymbol name )
-                , ( "func", encodeFuncDecl func )
+            Let defs body ->
+                [ ( "type", E.string "let" )
+                , ( "defs"
+                  , E.list
+                        (\( name, val ) ->
+                            E.object
+                                [ ( "name", E.string name )
+                                , ( "val", encodeExpr val )
+                                ]
+                        )
+                        defs
+                  )
+                , ( "body", encodeExpr body )
                 ]
 
             StrLit s ->
@@ -488,25 +543,10 @@ encodeExpr expr =
                 , ( "value", E.float n )
                 ]
 
-            KeyLit k ->
-                [ ( "type", E.string "numLit" )
-                , ( "value", E.int k )
-                ]
-
             ListLit list ->
                 [ ( "type", E.string "list" )
                 , ( "elements", E.list encodeExpr list )
                 ]
-
-
-encodeMaybe : (a -> E.Value) -> Maybe a -> E.Value
-encodeMaybe func maybe =
-    case maybe of
-        Just a ->
-            func a
-
-        Nothing ->
-            E.null
 
 
 encodeSymbol : SymbolNode -> E.Value
@@ -514,3 +554,21 @@ encodeSymbol sym =
     encodeWithLocation sym.loc
         [ ( "name", E.string sym.node )
         ]
+
+
+{-| -}
+encodeReplExpression : ReplExpression -> E.Value
+encodeReplExpression replExpression =
+    case replExpression of
+        Expression expr ->
+            E.object
+                [ ( "type", E.string "expression" )
+                , ( "expr", encodeExpr expr )
+                ]
+
+        Definition name val ->
+            E.object
+                [ ( "type", E.string "definition" )
+                , ( "name", E.string "name" )
+                , ( "value", encodeExpr val )
+                ]

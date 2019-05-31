@@ -28,13 +28,10 @@ view input =
             , style "height" "200px"
             ]
             []
-        , monodiv <|
-            case Lisa.parseExpression input { macros = Dict.empty } of
-                Ok result ->
-                    result |> E.list Lisa.Process.encodeExpr |> E.encode 2
-
-                Err err ->
-                    err.msg
+        , input
+            |> Lisa.parseProgramToJson { macros = Dict.empty }
+            |> E.encode 2
+            |> monodiv
         ]
 
 

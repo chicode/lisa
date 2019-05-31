@@ -37,7 +37,7 @@ type Problem
 
 type Context
     = StrLit
-    | ListLit
+    | Grouping
     | TopCtx
 
 
@@ -51,7 +51,8 @@ type alias ParserError =
 
 {-| -}
 type SExpr
-    = List (List AstNode)
+    = Group (List AstNode)
+    | List (List AstNode)
     | Symbol String
     | Str String
     | Num Float
@@ -79,7 +80,7 @@ reprErr err =
                 top :: rest ->
                     Just <|
                         case top.context of
-                            ListLit ->
+                            Grouping ->
                                 List.head rest |> Maybe.withDefault top
 
                             _ ->
@@ -109,10 +110,10 @@ errorToString : ParserError -> String
 errorToString err =
     case err.problem of
         ExpectedExpr ->
-            "Expected an expression, like a list: (a b c), string: \"abc\", or number: 123"
+            "Expected an expression, like a group: (a b c), string: \"abc\", or number: 123"
 
         ExpectedListEnd ->
-            "Expected the end of a list, but couldn't find it. Try adding a ')'."
+            "Expected the end of a group, but couldn't find it. Try adding a ')'."
 
         UnexpectedStringEnd ->
             "Couldn't find a closing '\"' for string literal."
@@ -173,6 +174,7 @@ expr =
             [ map Symbol symbol
             , map Num float
             , map Str string
+            , map Group group
             , map List list
             ]
         |= getPosition
@@ -212,12 +214,22 @@ symbolHelper c =
     Char.isAlpha c || Set.member c validSymbols
 
 
+group : Parser (List AstNode)
+group =
+    parenthesized "(" ")"
+
+
 list : Parser (List AstNode)
 list =
-    inContext ListLit <|
+    parenthesized "[" "]"
+
+
+parenthesized : String -> String -> Parser (List AstNode)
+parenthesized open close =
+    inContext Grouping <|
         (succeed identity
-            |. token (Token "(" ExpectedExpr)
-            |= loop [] listHelp
+            |. token (Token open ExpectedExpr)
+            |= loop [] (listHelp close)
             |> andThen
                 (\maybeElems ->
                     case maybeElems of
@@ -230,13 +242,15 @@ list =
         )
 
 
-listHelp : List AstNode -> Parser (Step (List AstNode) (Maybe (List AstNode)))
-listHelp revElems =
+listHelp : String -> List AstNode -> Parser (Step (List AstNode) (Maybe (List AstNode)))
+listHelp close revElems =
     succeed identity
         |. spaces
         |= oneOf
             [ lazy (\_ -> expr) |> map (\elem -> Loop <| elem :: revElems)
-            , token (Token ")" ExpectedListEnd) |> map (\_ -> Done <| Just <| List.reverse revElems)
+            , token
+                (Token close ExpectedListEnd)
+                |> map (\_ -> Done <| Just <| List.reverse revElems)
             , end Never |> map (\_ -> Done Nothing)
             ]
 

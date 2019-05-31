@@ -8,6 +8,7 @@ module Lisa.Common exposing
     , errNode
     , foldlListResult
     , foldrListResult
+    , groupListEvery2
     , mapListResult
     , mapNode
     , nonRecovErrNode
@@ -27,6 +28,7 @@ module Lisa.Common exposing
 @docs errNode
 @docs foldlListResult
 @docs foldrListResult
+@docs groupListEvery2
 @docs mapListResult
 @docs mapNode
 @docs nonRecovErrNode
@@ -147,7 +149,7 @@ foldrListResult func acc =
 {-| -}
 mapListResult : (a -> Result e b) -> List a -> Result e (List b)
 mapListResult func =
-    foldrListResult (\a list -> func a |> Result.map (\b -> b :: list)) []
+    foldlListResult (\a list -> func a |> Result.map (\b -> b :: list)) []
 
 
 {-| -}
@@ -160,3 +162,22 @@ nonRecovError =
 nonRecovErrNode : LocatedNode a -> String -> Error
 nonRecovErrNode =
     errNode Nonrecoverable
+
+
+{-| -}
+groupListEvery2 : List a -> Result a (List ( a, a ))
+groupListEvery2 =
+    splitHelp []
+
+
+splitHelp : List ( a, a ) -> List a -> Result a (List ( a, a ))
+splitHelp revList list =
+    case list of
+        a :: b :: rest ->
+            splitHelp (( a, b ) :: revList) rest
+
+        [] ->
+            Ok <| List.reverse revList
+
+        a :: [] ->
+            Err a

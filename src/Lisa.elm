@@ -45,36 +45,62 @@ module Lisa exposing
 import Json.Encode as E
 import Lisa.Common exposing (Error, encodeResult, mapListResult)
 import Lisa.Parser
-import Lisa.Process exposing (ExprNode, encodeExpr)
+import Lisa.Process
+    exposing
+        ( ExprNode
+        , Program
+        , ReplExpression
+        , encodeExpr
+        , encodeReplExpression
+        )
 
 
 {-| Parse a string into a program
 -}
-parseProgram : String -> Lisa.Process.Options -> Result Error (List ExprNode)
-parseProgram input opts =
+parseProgram : Lisa.Process.Options -> String -> Result Error Program
+parseProgram opts input =
     Lisa.Parser.parse input
         |> Result.andThen (Lisa.Process.processProgram opts)
 
 
 {-| Parse a string into a Json representation of a program
 -}
-parseProgramToJson : String -> Lisa.Process.Options -> E.Value
-parseProgramToJson input opts =
-    parseProgram input opts
-        |> encodeResult (E.list encodeExpr)
+parseProgramToJson : Lisa.Process.Options -> String -> E.Value
+parseProgramToJson opts input =
+    input
+        |> parseProgram opts
+        |> encodeResult (E.dict identity encodeExpr)
 
 
 {-| Parse a string into an expression
 -}
-parseExpression : String -> Lisa.Process.Options -> Result Error (List ExprNode)
-parseExpression input opts =
+parseExpression : Lisa.Process.Options -> String -> Result Error (List ExprNode)
+parseExpression opts input =
     Lisa.Parser.parse input
         |> Result.andThen (mapListResult (Lisa.Process.processExprOpts opts))
 
 
 {-| Parse a string into a Json representation of an expression
 -}
-parseExpressionToJson : String -> Lisa.Process.Options -> E.Value
-parseExpressionToJson input opts =
-    parseExpression input opts
+parseExpressionToJson : Lisa.Process.Options -> String -> E.Value
+parseExpressionToJson opts input =
+    input
+        |> parseExpression opts
         |> encodeResult (E.list encodeExpr)
+
+
+{-| Parse a string into an expression intended for a REPL
+-}
+parseReplExpression : Lisa.Process.Options -> String -> Result Error (List ReplExpression)
+parseReplExpression opts input =
+    Lisa.Parser.parse input
+        |> Result.andThen (mapListResult (Lisa.Process.processReplExpr opts))
+
+
+{-| Parse a string into a Json representation of an expression intended for a REPL
+-}
+parseReplExpressionToJson : Lisa.Process.Options -> String -> E.Value
+parseReplExpressionToJson opts input =
+    input
+        |> parseReplExpression opts
+        |> encodeResult (E.list encodeReplExpression)
