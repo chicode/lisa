@@ -30,9 +30,9 @@ update msg () =
     case msg of
         Request s ->
             ( ()
-            , out <|
-                Lisa.parseExpressionToJson s
-                    { macros = Dict.empty }
+            , s
+                |> Lisa.parseExpressionToJson { macros = Dict.empty }
+                |> out
             )
 
 

@@ -56,10 +56,12 @@ import Tuple
 {-| -}
 type Expr
     = GetSymbol String
-    | FuncCall SymbolNode (List ExprNode)
+    | FuncCall ExprNode (List ExprNode)
     | Cond CondExpr
     | Func FuncDecl
     | Let (List ( String, ExprNode )) ExprNode
+    | RecordLit (Dict String ExprNode)
+    | FieldAccess (List String)
     | NoneLit
     | BoolLit Bool
     | NumLit Float
@@ -198,6 +200,36 @@ processExpr ctx expr =
         Num n ->
             Ok <| mapNode expr <| NumLit n
 
+        Record record ->
+            let
+                recordFormErr =
+                    "Records should look like this: { keyOne expressionOne "
+                        ++ "keyTwo 2 keyThree \"expression three\" }"
+            in
+            groupListEvery2 record
+                |> Result.mapError (\a -> nonRecovErrNode a recordFormErr)
+                |> Result.andThen
+                    (foldlListResult
+                        (\( keyNode, valueNode ) recordDict ->
+                            Result.map2 Tuple.pair
+                                (processSymbol keyNode)
+                                (processExpr ctx valueNode)
+                                |> Result.andThen
+                                    (\( key, value ) ->
+                                        if Dict.member key.node recordDict then
+                                            Err <| nonRecovErrNode key ""
+
+                                        else
+                                            Ok <| Dict.insert key.node value recordDict
+                                    )
+                        )
+                        Dict.empty
+                    )
+                |> Result.map (mapNode expr << RecordLit)
+
+        FieldName fields ->
+            Ok <| mapNode expr <| FieldAccess fields
+
         Symbol sym ->
             case sym of
                 "none" ->
@@ -225,37 +257,39 @@ processExpr ctx expr =
                 [] ->
                     Err <| nonRecovErrNode expr <| ""
 
-                name :: args ->
-                    case name.node of
-                        Symbol sym ->
-                            processGroup ctx expr.loc (mapNode name sym) args
-
-                        _ ->
-                            Err <|
-                                nonRecovErrNode name <|
-                                    "First element in a group must be a symbol"
+                func :: args ->
+                    processGroup ctx expr.loc func args
 
 
-processGroup : Context -> Location -> SymbolNode -> List AstNode -> Result Error ExprNode
+processGroup : Context -> Location -> AstNode -> List AstNode -> Result Error ExprNode
 processGroup ctx loc name args =
     case name.node of
-        "cond" ->
+        Symbol "cond" ->
             processCond ctx loc args
 
-        "func" ->
+        Symbol "func" ->
             processFunc ctx loc args
 
-        "let" ->
+        Symbol "let" ->
             processLet ctx loc args
 
         _ ->
-            case Dict.get name.node (getCtx ctx).macros of
+            let
+                maybeMacro =
+                    case name.node of
+                        Symbol sym ->
+                            Dict.get sym (getCtx ctx).macros
+
+                        _ ->
+                            Nothing
+            in
+            case maybeMacro of
                 Just macro ->
                     macro ctx loc args
 
                 Nothing ->
                     Result.map2 FuncCall
-                        (validSymbol name)
+                        (processExpr ctx name)
                         (args |> mapListResult (processExpr ctx))
                         |> Result.map (LocatedNode loc)
 
@@ -517,7 +551,7 @@ encodeExpr expr =
 
             FuncCall func args ->
                 [ ( "type", E.string "funcCall" )
-                , ( "func", encodeSymbol func )
+                , ( "func", encodeExpr func )
                 , ( "args", E.list encodeExpr args )
                 ]
 
@@ -555,6 +589,16 @@ encodeExpr expr =
                         defs
                   )
                 , ( "body", encodeExpr body )
+                ]
+
+            RecordLit fields ->
+                [ ( "type", E.string "recordLit" )
+                , ( "fields", E.dict identity encodeExpr fields )
+                ]
+
+            FieldAccess fieldNames ->
+                [ ( "type", E.string "fieldAccess" )
+                , ( "fieldNames", E.list E.string fieldNames )
                 ]
 
             NoneLit ->

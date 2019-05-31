@@ -28,7 +28,7 @@ import Set exposing (Set)
 
 type Problem
     = ExpectedExpr
-    | ExpectedListEnd
+    | ExpectedGroupEnd String
     | UnexpectedStringEnd
     | InvalidNumber
     | InvalidStringEscape
@@ -53,6 +53,8 @@ type alias ParserError =
 type SExpr
     = Group (List AstNode)
     | List (List AstNode)
+    | Record (List AstNode)
+    | FieldName (List String)
     | Symbol String
     | Str String
     | Num Float
@@ -96,7 +98,7 @@ reprErr err =
     in
     Error
         (case err.problem of
-            ExpectedListEnd ->
+            ExpectedGroupEnd _ ->
                 Recoverable
 
             _ ->
@@ -112,8 +114,8 @@ errorToString err =
         ExpectedExpr ->
             "Expected an expression, like a group: (a b c), string: \"abc\", or number: 123"
 
-        ExpectedListEnd ->
-            "Expected the end of a group, but couldn't find it. Try adding a ')'."
+        ExpectedGroupEnd end ->
+            "Expected the end of a group, but couldn't find it. Try adding a '" ++ end ++ "'."
 
         UnexpectedStringEnd ->
             "Couldn't find a closing '\"' for string literal."
@@ -135,7 +137,8 @@ parse input =
     Parser.run parser input
         |> Result.mapError
             (\err ->
-                List.head err
+                err
+                    |> List.head
                     |> Maybe.withDefault
                         { row = 0
                         , col = 0
@@ -176,6 +179,8 @@ expr =
             , map Str string
             , map Group group
             , map List list
+            , map Record record
+            , map FieldName fieldName
             ]
         |= getPosition
 
@@ -214,6 +219,29 @@ symbolHelper c =
     Char.isAlpha c || Set.member c validSymbols
 
 
+fieldName : Parser (List String)
+fieldName =
+    loop [] fieldHelp
+
+
+fieldHelp : List String -> Parser (Step (List String) (List String))
+fieldHelp revFields =
+    oneOf
+        [ succeed (\sym -> Loop <| sym :: revFields)
+            |. token (Token "." ExpectedExpr)
+            |= symbol
+        , succeed ()
+            |> andThen
+                (\_ ->
+                    if List.isEmpty revFields then
+                        problem ExpectedExpr
+
+                    else
+                        succeed <| Done <| List.reverse revFields
+                )
+        ]
+
+
 group : Parser (List AstNode)
 group =
     parenthesized "(" ")"
@@ -222,6 +250,11 @@ group =
 list : Parser (List AstNode)
 list =
     parenthesized "[" "]"
+
+
+record : Parser (List AstNode)
+record =
+    parenthesized "{" "}"
 
 
 parenthesized : String -> String -> Parser (List AstNode)
@@ -237,7 +270,7 @@ parenthesized open close =
                             succeed elems
 
                         Nothing ->
-                            problem ExpectedListEnd
+                            problem <| ExpectedGroupEnd close
                 )
         )
 
@@ -248,8 +281,7 @@ listHelp close revElems =
         |. spaces
         |= oneOf
             [ lazy (\_ -> expr) |> map (\elem -> Loop <| elem :: revElems)
-            , token
-                (Token close ExpectedListEnd)
+            , token (Token close (ExpectedGroupEnd close))
                 |> map (\_ -> Done <| Just <| List.reverse revElems)
             , end Never |> map (\_ -> Done Nothing)
             ]
