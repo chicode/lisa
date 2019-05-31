@@ -645,6 +645,6 @@ encodeReplExpression replExpression =
         Definition name val ->
             E.object
                 [ ( "type", E.string "definition" )
-                , ( "name", E.string "name" )
+                , ( "name", E.string name )
                 , ( "value", encodeExpr val )
                 ]
