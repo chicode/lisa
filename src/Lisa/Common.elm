@@ -150,6 +150,7 @@ foldrListResult func acc =
 mapListResult : (a -> Result e b) -> List a -> Result e (List b)
 mapListResult func =
     foldlListResult (\a list -> func a |> Result.map (\b -> b :: list)) []
+        >> Result.map List.reverse
 
 
 {-| -}
