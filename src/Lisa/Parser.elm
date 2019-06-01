@@ -70,6 +70,20 @@ locatedParse start node end =
     LocatedNode (Location start end) node
 
 
+spaces : Parser ()
+spaces =
+    loop () spacesHelp
+
+
+spacesHelp _ =
+    oneOf
+        [ chompIf (\c -> c == ' ' || c == '\n' || c == '\u{000D}') Never
+            |> map (\_ -> Loop ())
+        , lineComment (Token "//" Never) |> map (\_ -> Loop ())
+        , succeed () |> map (\_ -> Done ())
+        ]
+
+
 reprErr : ParserError -> Error
 reprErr err =
     let
@@ -133,9 +147,9 @@ errorToString err =
 
 {-| -}
 parse : String -> Result Error (List AstNode)
-parse input =
-    Parser.run parser input
-        |> Result.mapError
+parse =
+    Parser.run parser
+        >> Result.mapError
             (\err ->
                 err
                     |> List.head
