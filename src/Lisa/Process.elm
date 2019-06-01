@@ -273,6 +273,22 @@ processGroup ctx loc name args =
         Symbol "let" ->
             processLet ctx loc args
 
+        Symbol "if" ->
+            case args of
+                condNode :: bodyNode :: otherwiseNode :: [] ->
+                    Result.map3
+                        (\cond body otherwise ->
+                            LocatedNode loc <| Cond <| CondExpr [ ( cond, body ) ] otherwise
+                        )
+                        (processExpr ctx condNode)
+                        (processExpr ctx bodyNode)
+                        (processExpr ctx otherwiseNode)
+
+                _ ->
+                    Err <|
+                        nonRecovError loc <|
+                            "if takes the form of (if cond body otherwise)"
+
         _ ->
             let
                 maybeMacro =
@@ -559,7 +575,7 @@ encodeExpr expr =
                 ]
 
             Cond { clauses, otherwise } ->
-                [ ( "type", E.string "if" )
+                [ ( "type", E.string "cond" )
                 , ( "clauses"
                   , E.list
                         (\( cond, val ) ->
